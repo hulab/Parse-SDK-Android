@@ -2,11 +2,11 @@ package com.parse;
 
 import android.util.Pair;
 
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.parse.realm.annotations.EncodedField;
+import com.parse.realm.annotations.ObjectIdField;
+import com.parse.realm.annotations.ParseClassNameField;
 
-import java.security.InvalidParameterException;
-import java.util.Date;
+import org.json.JSONObject;
 
 import io.realm.Realm;
 import io.realm.RealmObject;
@@ -17,83 +17,76 @@ import io.realm.annotations.Required;
  * Created by maxime on 10/01/2017.
  */
 
-public class ParseRealmObject<T extends ParseObject> extends RealmObject {
+public class ParseRealmObject extends RealmObject {
 
     @PrimaryKey
+    @ObjectIdField
     private String objectId;
 
     @Required
+    @ParseClassNameField
     private String parseClassName;
 
-    private Date createdAt;
-
-    private Date updatedAt;
-
     @Required
+    @EncodedField
     private String encodedObject;
 
-    public String getObjectId() {
-        return objectId;
-    }
+    /* package */ static <T extends ParseObject> RealmObject encode(Realm realm, T object) {
 
-    /**
-     * Accessor to the class name.
-     */
-    public String getParseClassName() {
-        return parseClassName;
-    }
+        try {
 
-    public Date getCreatedAt() {
-        return createdAt;
-    }
+            RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(object.getClassName());
+            RealmObject realmObject = realm.createObject(schema.clazz);
 
-    public Date getUpdatedAt() {
-        return updatedAt;
-    }
+            schema.objectIdField.set(realmObject, object.getObjectId());
 
-    /* package */ static <T extends ParseObject> ParseRealmObject<T> encode(Realm realm, T object) {
-
-        Class<? extends ParseRealmObject> clazz = RealmStore.RealmSchemaController.getSubclass(object.getClassName());
-        ParseRealmObject<T> realmObject = realm.createObject(clazz, object.getObjectId());
-
-        cacheObject(object);
-
-        realmObject.objectId = object.getObjectId();
-        realmObject.parseClassName = object.getClassName();
-        realmObject.createdAt  = object.getCreatedAt();
-        realmObject.updatedAt = object.getUpdatedAt();
-
-        ParseEncoder encoder = new PointerEncoder();
-        realmObject.encodedObject = object.toRest(encoder).toString();
-
-        realmObject.encode(object);
-
-        return realmObject;
-    }
-
-    protected void encode(T object) {
-
-    }
-
-    /* package */ T decode(Realm realm) {
-        ParseObject object = getObjectFromCache(parseClassName, objectId);
-
-        if(object == null) {
-            object = ParseObject.createWithoutData(parseClassName, objectId);
             cacheObject(object);
 
-            try {
-                RealmDecoder decoder = new RealmDecoder(realm);
-                object.build(new JSONObject(encodedObject), decoder);
-            } catch (JSONException e) {
-                e.printStackTrace();
+            schema.objectIdField.set(realmObject, object.getObjectId());
+            schema.parseClassNameField.set(realmObject, object.getClassName());
+
+            ParseEncoder encoder = new PointerEncoder();
+            schema.encodedField.set(realmObject, object.toRest(encoder).toString());
+
+            if (realmObject instanceof Mapper) {
+                ((Mapper<T>)realmObject).map(object);
             }
+
+            return realmObject;
+
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-        return (T)object;
+
+        return null;
     }
 
-    public static void registerRealmSchema(Class<? extends ParseRealmObject> subclass) {
-        RealmStore.RealmSchemaController.registerSubclass(subclass);
+    /* package */ static <T extends ParseObject> T decode(Realm realm, String parseClassName, RealmObject realmObject) {
+
+        try {
+            RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(parseClassName);
+            String objectId = (String) schema.objectIdField.get(realmObject);
+
+            ParseObject object = getObjectFromCache(parseClassName, objectId);
+
+            if(object == null) {
+                object = ParseObject.createWithoutData(parseClassName, objectId);
+                cacheObject(object);
+
+                String json = (String) schema.encodedField.get(realmObject);
+                if (json != null) {
+                    RealmDecoder decoder = new RealmDecoder(realm);
+                    object.build(new JSONObject(json), decoder);
+                }
+            }
+
+            return (T)object;
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return null;
     }
 
     private static final WeakValueHashMap<Pair<String, String>, ParseObject>
@@ -135,20 +128,26 @@ public class ParseRealmObject<T extends ParseObject> extends RealmObject {
             object = ParseObject.createWithoutData(parseClassName, objectId);
             cacheObject(object);
 
-            Class<? extends ParseRealmObject> clazz = RealmStore.RealmSchemaController.getSubclass(parseClassName);
-
-            ParseRealmObject realmObject = realm.where(clazz).equalTo("objectId", objectId).findFirst();
+            RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(parseClassName);
+            RealmObject realmObject = realm.where(schema.clazz).equalTo(schema.objectIdField.getName(), objectId).findFirst();
 
             if (realmObject != null) {
                 try {
+
                     RealmDecoder decoder = new RealmDecoder(realm);
-                    object.build(new JSONObject(realmObject.encodedObject), decoder);
-                } catch (JSONException e) {
+                    String json = (String) schema.encodedField.get(realmObject);
+                    object.build(new JSONObject(json), decoder);
+
+                } catch (Exception e) {
                     e.printStackTrace();
                 }
             }
         }
         return object;
+    }
+
+    public interface Mapper<T extends ParseObject> {
+        void map(T object);
     }
 
 }

@@ -11,6 +11,7 @@ import io.realm.Case;
 import io.realm.Realm;
 import io.realm.RealmChangeListener;
 import io.realm.RealmConfiguration;
+import io.realm.RealmObject;
 import io.realm.RealmResults;
 import io.realm.annotations.Required;
 
@@ -21,13 +22,15 @@ import io.realm.annotations.Required;
 public final class RealmQuery<T extends ParseObject> {
 
     private RealmConfiguration config;
-    private io.realm.RealmQuery<? extends ParseRealmObject> query;
+    private String className;
+    private io.realm.RealmQuery<? extends RealmObject> query;
 
     private RealmQuery(RealmStore store, String parseClassName) {
         config = store.getConfiguration();
+        className = parseClassName;
         Realm realm = Realm.getInstance(config);
-        Class<? extends ParseRealmObject> schema = RealmStore.RealmSchemaController.getSubclass(parseClassName);
-        this.query = realm.where(schema);
+        RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(parseClassName);
+        this.query = realm.where(schema.clazz).equalTo(schema.parseClassNameField.getName(), parseClassName);
     }
 
     public static <T extends ParseObject> RealmQuery<T> createQuery(String parseClassName) {
@@ -990,22 +993,24 @@ public final class RealmQuery<T extends ParseObject> {
 
         final TaskCompletionSource<T> source = new TaskCompletionSource<>();
 
-        RealmChangeListener<ParseRealmObject<T>> listener = new RealmChangeListener<ParseRealmObject<T>>() {
+        RealmChangeListener<RealmObject> listener = new RealmChangeListener<RealmObject>() {
             @Override
-            public void onChange(ParseRealmObject<T> element) {
+            public void onChange(RealmObject element) {
 
-                try {
-                    Realm realm = Realm.getInstance(config);
-                    element.removeChangeListeners();
+            try {
+                Realm realm = Realm.getInstance(config);
+                element.removeChangeListeners();
 
-                    source.setResult(element.decode(realm));
-                } catch (Exception e) {
-                    source.setError(e);
-                }
+                T object = ParseRealmObject.decode(realm, className, element);
+
+                source.setResult(object);
+            } catch (Exception e) {
+                source.setError(e);
+            }
             }
         };
 
-        ParseRealmObject object = query.findFirstAsync();
+        RealmObject object = query.findFirstAsync();
         object.addChangeListener(listener);
 
         return source.getTask();
@@ -1015,23 +1020,25 @@ public final class RealmQuery<T extends ParseObject> {
 
         final TaskCompletionSource<List<T>> source = new TaskCompletionSource<>();
 
-        RealmChangeListener<RealmResults<ParseRealmObject<T>>> listener = new RealmChangeListener<RealmResults<ParseRealmObject<T>>>() {
+        RealmChangeListener<RealmResults<RealmObject>> listener = new RealmChangeListener<RealmResults<RealmObject>>() {
             @Override
-            public void onChange(RealmResults<ParseRealmObject<T>> results) {
+            public void onChange(RealmResults<RealmObject> results) {
 
-                try {
-                    Realm realm = Realm.getInstance(config);
-                    ArrayList<T> objects = new ArrayList<>();
+            try {
+                Realm realm = Realm.getInstance(config);
+                ArrayList<T> objects = new ArrayList<>();
 
-                    for (ParseRealmObject<T> element : results) {
-                        objects.add(element.decode(realm));
-                    }
-                    results.removeChangeListeners();
+                for (RealmObject element : results) {
 
-                    source.setResult(objects);
-                } catch (Exception e) {
-                    source.setError(e);
+                    T object = ParseRealmObject.decode(realm, className, element);
+                    objects.add(object);
                 }
+                results.removeChangeListeners();
+
+                source.setResult(objects);
+            } catch (Exception e) {
+                source.setError(e);
+            }
             }
         };
 
