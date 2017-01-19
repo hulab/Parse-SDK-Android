@@ -20,5 +20,6 @@ import java.lang.annotation.Target;
 @Target({ElementType.FIELD })
 @Retention(RetentionPolicy.RUNTIME)
 @Inherited
-public @interface ParseClassNameField {
+public @interface Key {
+    String value();
 }

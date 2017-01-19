@@ -1,10 +1,13 @@
 package com.parse;
 
-import com.parse.realm.annotations.EncodedField;
-import com.parse.realm.annotations.ObjectIdField;
-import com.parse.realm.annotations.ParseClassNameField;
+import com.parse.realm.annotations.CreatedAt;
+import com.parse.realm.annotations.EncodedData;
+import com.parse.realm.annotations.Key;
+import com.parse.realm.annotations.ObjectId;
+import com.parse.realm.annotations.UpdatedAt;
 
 import java.lang.reflect.Field;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -22,9 +25,12 @@ class RealmSchemaController {
 
     static class RealmSchema {
         Class<? extends RealmObject> clazz;
-        Field objectIdField;
-        Field parseClassNameField;
-        Field encodedField;
+        Field objectId;
+        Field encodedData;
+        Field createAt;
+        Field updatedAt;
+
+        Map<String, Field> keys = new HashMap<>();
 
         RealmSchema(Class<? extends RealmObject> clazz) {
             this.clazz = clazz;
@@ -46,42 +52,62 @@ class RealmSchemaController {
         Field[] fields = clazz.getDeclaredFields();
         for (Field field : fields) {
 
-            if (field.isAnnotationPresent(ObjectIdField.class)) {
-                if (schema.objectIdField != null) {
-                    throw new IllegalArgumentException("ObjectIdField annotation has to be unique");
+            if (field.isAnnotationPresent(ObjectId.class)) {
+                if (schema.objectId != null) {
+                    throw new IllegalArgumentException("ObjectId annotation must be unique");
                 }
                 if (field.getType() != String.class) {
-                    throw new IllegalArgumentException("ObjectIdField annotation must associated to a String field");
+                    throw new IllegalArgumentException("ObjectId annotation must associated to a String field");
                 }
-                schema.objectIdField = field;
+                schema.objectId = field;
                 break;
             }
 
-            if (field.isAnnotationPresent(ParseClassNameField.class)) {
-                if (schema.parseClassNameField != null) {
-                    throw new IllegalArgumentException("ParseClassNameField annotation has to be unique");
+            if (field.isAnnotationPresent(EncodedData.class)) {
+                if (schema.encodedData != null) {
+                    throw new IllegalArgumentException("EncodedData annotation must be unique");
                 }
                 if (field.getType() != String.class) {
-                    throw new IllegalArgumentException("ParseClassNameField annotation must associated to a String field");
+                    throw new IllegalArgumentException("EncodedData annotation must associated to a String field");
                 }
-                schema.parseClassNameField = field;
+                schema.encodedData = field;
                 break;
             }
 
-            if (field.isAnnotationPresent(EncodedField.class)) {
-                if (schema.encodedField != null) {
-                    throw new IllegalArgumentException("EncodedField annotation has to be unique");
+            if (field.isAnnotationPresent(CreatedAt.class)) {
+                if (schema.createAt != null) {
+                    throw new IllegalArgumentException("CreatedAt annotation must be unique");
                 }
-                if (field.getType() != String.class) {
-                    throw new IllegalArgumentException("EncodedField annotation must associated to a String field");
+                if (field.getType() != Date.class) {
+                    throw new IllegalArgumentException("CreatedAt annotation must associated to a Date field");
                 }
-                schema.encodedField = field;
+                schema.createAt = field;
                 break;
+            }
+
+            if (field.isAnnotationPresent(UpdatedAt.class)) {
+                if (schema.updatedAt != null) {
+                    throw new IllegalArgumentException("UpdatedAt annotation must be unique");
+                }
+                if (field.getType() != Date.class) {
+                    throw new IllegalArgumentException("UpdatedAt annotation must associated to a Date field");
+                }
+                schema.updatedAt = field;
+                break;
+            }
+
+            if (field.isAnnotationPresent(Key.class)) {
+                String key = field.getAnnotation(Key.class).value();
+
+                if (schema.keys.containsKey(key)) {
+                    throw new IllegalArgumentException("Key annotation for " + key + " must be unique");
+                }
+                schema.keys.put(key, field);
             }
         }
 
-        if (schema.objectIdField == null && schema.parseClassNameField == null && schema.encodedField == null) {
-            throw new IllegalArgumentException("ObjectIdField annotation has to be unique");
+        if (schema.objectId == null && schema.encodedData == null) {
+            throw new IllegalArgumentException(clazz + " must provide ObjectId and EncodedData annotations");
         }
 
         return schema;

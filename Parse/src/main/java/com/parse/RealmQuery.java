@@ -30,7 +30,11 @@ public final class RealmQuery<T extends ParseObject> {
         className = parseClassName;
         Realm realm = Realm.getInstance(config);
         RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(parseClassName);
-        this.query = realm.where(schema.clazz).equalTo(schema.parseClassNameField.getName(), parseClassName);
+        this.query = realm.where(schema.clazz);
+
+        if (schema.clazz == ParseRealmObject.class) {
+            this.query.equalTo("parseClassName", parseClassName);
+        }
     }
 
     public static <T extends ParseObject> RealmQuery<T> createQuery(String parseClassName) {

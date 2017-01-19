@@ -2,11 +2,13 @@ package com.parse;
 
 import android.util.Pair;
 
-import com.parse.realm.annotations.EncodedField;
-import com.parse.realm.annotations.ObjectIdField;
-import com.parse.realm.annotations.ParseClassNameField;
+import com.parse.realm.annotations.EncodedData;
+import com.parse.realm.annotations.ObjectId;
 
 import org.json.JSONObject;
+
+import java.lang.reflect.Field;
+import java.util.Map;
 
 import io.realm.Realm;
 import io.realm.RealmObject;
@@ -19,16 +21,13 @@ import io.realm.annotations.Required;
 
 public class ParseRealmObject extends RealmObject {
 
-    @PrimaryKey
-    @ObjectIdField
-    private String objectId;
-
     @Required
-    @ParseClassNameField
     private String parseClassName;
 
-    @Required
-    @EncodedField
+    @ObjectId @PrimaryKey
+    private String objectId;
+
+    @EncodedData @Required
     private String encodedObject;
 
     /* package */ static <T extends ParseObject> RealmObject encode(Realm realm, T object) {
@@ -38,18 +37,29 @@ public class ParseRealmObject extends RealmObject {
             RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(object.getClassName());
             RealmObject realmObject = realm.createObject(schema.clazz);
 
-            schema.objectIdField.set(realmObject, object.getObjectId());
+            schema.objectId.set(realmObject, object.getObjectId());
 
             cacheObject(object);
 
-            schema.objectIdField.set(realmObject, object.getObjectId());
-            schema.parseClassNameField.set(realmObject, object.getClassName());
+            schema.objectId.set(realmObject, object.getObjectId());
 
             ParseEncoder encoder = new PointerEncoder();
-            schema.encodedField.set(realmObject, object.toRest(encoder).toString());
+            schema.encodedData.set(realmObject, object.toRest(encoder).toString());
 
-            if (realmObject instanceof Mapper) {
-                ((Mapper<T>)realmObject).map(object);
+            if (schema.createAt != null) {
+                schema.createAt.set(realmObject, object.getCreatedAt());
+            }
+
+            if (schema.updatedAt != null) {
+                schema.updatedAt.set(realmObject, object.getCreatedAt());
+            }
+
+            for (Map.Entry<String, Field> entry : schema.keys.entrySet()) {
+                entry.getValue().set(realmObject, object.get(entry.getKey()));
+            }
+
+            if (realmObject instanceof ParseRealmObject) {
+                ((ParseRealmObject) realmObject).parseClassName = object.getClassName();
             }
 
             return realmObject;
@@ -65,7 +75,7 @@ public class ParseRealmObject extends RealmObject {
 
         try {
             RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(parseClassName);
-            String objectId = (String) schema.objectIdField.get(realmObject);
+            String objectId = (String) schema.objectId.get(realmObject);
 
             ParseObject object = getObjectFromCache(parseClassName, objectId);
 
@@ -73,7 +83,7 @@ public class ParseRealmObject extends RealmObject {
                 object = ParseObject.createWithoutData(parseClassName, objectId);
                 cacheObject(object);
 
-                String json = (String) schema.encodedField.get(realmObject);
+                String json = (String) schema.encodedData.get(realmObject);
                 if (json != null) {
                     RealmDecoder decoder = new RealmDecoder(realm);
                     object.build(new JSONObject(json), decoder);
@@ -129,13 +139,13 @@ public class ParseRealmObject extends RealmObject {
             cacheObject(object);
 
             RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(parseClassName);
-            RealmObject realmObject = realm.where(schema.clazz).equalTo(schema.objectIdField.getName(), objectId).findFirst();
+            RealmObject realmObject = realm.where(schema.clazz).equalTo(schema.objectId.getName(), objectId).findFirst();
 
             if (realmObject != null) {
                 try {
 
                     RealmDecoder decoder = new RealmDecoder(realm);
-                    String json = (String) schema.encodedField.get(realmObject);
+                    String json = (String) schema.encodedData.get(realmObject);
                     object.build(new JSONObject(json), decoder);
 
                 } catch (Exception e) {
@@ -144,10 +154,6 @@ public class ParseRealmObject extends RealmObject {
             }
         }
         return object;
-    }
-
-    public interface Mapper<T extends ParseObject> {
-        void map(T object);
     }
 
 }

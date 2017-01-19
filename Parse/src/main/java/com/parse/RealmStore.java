@@ -123,7 +123,7 @@ public class RealmStore {
 
                         if (delete) {
                             RealmSchemaController.RealmSchema schema = RealmSchemaController.getSchema(obj.getClassName());
-                            RealmObject realmObject = realm.where(schema.clazz).equalTo(schema.objectIdField.getName(), obj.getObjectId()).findFirst();
+                            RealmObject realmObject = realm.where(schema.clazz).equalTo(schema.objectId.getName(), obj.getObjectId()).findFirst();
                             if (realmObject != null) {
                                 realmObject.deleteFromRealm();
                             }
