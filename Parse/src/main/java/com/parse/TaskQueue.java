@@ -18,7 +18,7 @@ import bolts.Task;
 /**
  * A helper class for enqueueing tasks
  */
-/** package */ class TaskQueue {
+public class TaskQueue {
   /**
    * We only need to keep the tail of the queue. Cancelled tasks will just complete
    * normally/immediately when their turn arrives.
@@ -56,7 +56,7 @@ import bolts.Task;
    *          created task's turn in the queue.
    * @return The task created by the taskStart function.
    */
-  <T> Task<T> enqueue(Continuation<Void, Task<T>> taskStart) {
+  public <T> Task<T> enqueue(Continuation<Void, Task<T>> taskStart) {
     lock.lock();
     try {
       Task<T> task;
