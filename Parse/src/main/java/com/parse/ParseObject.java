@@ -954,6 +954,71 @@ public class ParseObject {
         return toRest(state, operationSetQueueCopy, encoder);
     }
 
+
+    public JSONObject toRestFromEstimatedData(ParseEncoder encoder) {
+        State state;
+        List<ParseOperationSet> operationSetQueueCopy;
+        synchronized (mutex) {
+            // mutex needed to lock access to state and operationSetQueue and operationSetQueue & children
+            // are mutable
+            state = getState();
+
+            // operationSetQueue is a List of Lists, so we'll need custom copying logic
+            int operationSetQueueSize = operationSetQueue.size();
+            operationSetQueueCopy = new ArrayList<>(operationSetQueueSize);
+            for (int i = 0; i < operationSetQueueSize; i++) {
+                ParseOperationSet original = operationSetQueue.get(i);
+                ParseOperationSet copy = new ParseOperationSet(original);
+                operationSetQueueCopy.add(copy);
+            }
+        }
+        return toRestFromEstimatedData(state, operationSetQueueCopy, encoder);
+    }
+
+    public JSONObject toRestFromEstimatedData(
+            State state, List<ParseOperationSet> operationSetQueue, ParseEncoder objectEncoder) {
+        // Public data goes in dataJSON; special fields go in objectJSON.
+        JSONObject json = new JSONObject();
+
+        try {
+            // REST JSON (State)
+            json.put(KEY_CLASS_NAME, state.className());
+            if (state.objectId() != null) {
+                json.put(KEY_OBJECT_ID, state.objectId());
+            }
+            if (state.createdAt() > 0) {
+                json.put(KEY_CREATED_AT,
+                        ParseDateFormat.getInstance().format(new Date(state.createdAt())));
+            }
+            //if (state.updatedAt() > 0) {
+                json.put(KEY_UPDATED_AT,
+                        ParseDateFormat.getInstance().format(new Date()));
+            //}
+            for (String key : estimatedData.keySet()) {
+                Object value = estimatedData.get(key);
+                json.put(key, objectEncoder.encode(value));
+            }
+
+            // Internal JSON
+            //TODO(klimt): We'll need to rip all this stuff out and put it somewhere else if we start
+            // using the REST api and want to send data to Parse.
+            json.put(KEY_COMPLETE, state.isComplete());
+            json.put(KEY_IS_DELETING_EVENTUALLY, isDeletingEventually);
+
+            // Operation Set Queue
+            JSONArray operations = new JSONArray();
+            for (ParseOperationSet operationSet : operationSetQueue) {
+                operations.put(operationSet.toRest(objectEncoder));
+            }
+            json.put(KEY_OPERATIONS, operations);
+
+        } catch (JSONException e) {
+            throw new RuntimeException("could not serialize object to JSON");
+        }
+
+        return json;
+    }
+
     public JSONObject toRest(
             State state, List<ParseOperationSet> operationSetQueue, ParseEncoder objectEncoder) {
         // Public data goes in dataJSON; special fields go in objectJSON.
