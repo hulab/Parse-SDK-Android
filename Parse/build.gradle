@@ -2,18 +2,24 @@ import com.android.builder.core.BuilderConstants
 
 apply plugin: 'com.android.library'
 apply plugin: 'com.github.kt3k.coveralls'
-//apply plugin: 'realm-android'
+apply plugin: 'com.jfrog.bintray'
 
 group = 'com.parse'
-version = '1.13.2-SNAPSHOT'
+version = '1.15.9-SNAPSHOT'
 
+ext {
+    projDescription = 'A library that gives you access to the powerful Parse cloud platform from your Android app.'
+    artifact = 'parse-android'
+    projName = 'Parse-Android'
+    gitLink = 'https://github.com/parse-community/Parse-SDK-Android'
+}
 buildscript {
     repositories {
-        mavenCentral()
+        jcenter()
     }
 
     dependencies {
-        classpath 'org.kt3k.gradle.plugin:coveralls-gradle-plugin:2.0.1x'
+        classpath 'org.kt3k.gradle.plugin:coveralls-gradle-plugin:2.8.1'
     }
 }
 
@@ -29,6 +35,10 @@ android {
         consumerProguardFiles 'release-proguard.pro'
     }
 
+    packagingOptions {
+        exclude '**/BuildConfig.class'
+    }
+
     lintOptions {
         abortOnError false
     }
@@ -40,37 +50,27 @@ android {
     }
 }
 
+ext {
+    okhttpVersion = '3.8.0'
+}
+
 dependencies {
+    compile "com.android.support:support-annotations:$supportLibVersion"
     compile 'com.parse.bolts:bolts-tasks:1.4.0'
+    compile "com.squareup.okhttp3:okhttp:$okhttpVersion"
 
-    provided 'com.squareup.okhttp3:okhttp:3.3.1'
-    provided 'com.facebook.stetho:stetho:1.3.0'
-
-    testCompile 'org.robolectric:robolectric:3.0'
-    testCompile 'org.skyscreamer:jsonassert:1.2.3'
+    //Be aware, tests fail on 3.3.2 Wait to update until
+    //java.lang.NoClassDefFoundError: android/content/pm/VersionedPackage
+    //issue is fixed in Robolectric
+    //https://github.com/robolectric/robolectric/issues/2562
+    testCompile 'org.robolectric:robolectric:3.3'
+    testCompile 'org.skyscreamer:jsonassert:1.5.0'
     testCompile 'org.mockito:mockito-core:1.10.19'
-    testCompile 'com.squareup.okhttp3:mockwebserver:3.3.1'
+    testCompile "com.squareup.okhttp3:mockwebserver:$okhttpVersion"
 }
 
 android.libraryVariants.all { variant ->
     def name = variant.buildType.name
-    def jar = project.tasks.create(name: "jar${name.capitalize()}", type: Jar) {
-        dependsOn variant.javaCompile
-        from variant.javaCompile.destinationDir
-
-        manifest {
-            attributes(
-                    "Bundle-Name": 'parse-android',
-                    "Bundle-Version": project.version
-            )
-        }
-
-        exclude '**/R.class'
-        exclude '**/R\$*.class'
-        exclude '**/Manifest.class'
-        exclude '**/Manifest\$*.class'
-        exclude '**/BuildConfig.class'
-    }
 
     def javadoc = task("javadoc${variant.name.capitalize()}", type: Javadoc) {
         description "Generates Javadoc for $variant.name."
@@ -95,7 +95,6 @@ android.libraryVariants.all { variant ->
     }
 
     if (name.equals(BuilderConstants.RELEASE)) {
-        artifacts.add('archives', jar);
         artifacts.add('archives', javadocJar);
     }
 }
@@ -109,6 +108,30 @@ def isSnapshot = version.endsWith('-SNAPSHOT')
 def ossrhUsername = hasProperty('NEXUS_USERNAME') ? NEXUS_USERNAME : System.getenv('CI_NEXUS_USERNAME')
 def ossrhPassword = hasProperty('NEXUS_PASSWORD') ? NEXUS_PASSWORD : System.getenv('CI_NEXUS_PASSWORD')
 
+def pomConfig = {
+    licenses {
+        license {
+            name 'BSD License'
+            url 'https://github.com/parse-community/Parse-SDK-Android/blob/master/LICENSE'
+            distribution 'repo'
+        }
+    }
+
+    scm {
+       connection 'scm:git@github.com:parse-community/Parse-SDK-Android.git'
+       developerConnection 'scm:git@github.com:parse-community/Parse-SDK-Android.git'
+       url gitLink
+    }
+
+    developers {
+        developer {
+            id 'parse'
+            name 'Parse'
+        }
+    }
+}
+
+
 uploadArchives {
     repositories.mavenDeployer {
         beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
@@ -121,34 +144,15 @@ uploadArchives {
             authentication(userName: ossrhUsername, password: ossrhPassword)
         }
 
-        pom.project {
-            name 'Parse-Android'
-            artifactId = 'parse-android'
-            packaging 'jar'
-            description 'A library that gives you access to the powerful Parse cloud platform from your Android app.'
-            url 'https://github.com/ParsePlatform/Parse-SDK-Android'
-
-            scm {
-                connection 'scm:git@github.com:ParsePlatform/Parse-SDK-Android.git'
-                developerConnection 'scm:git@github.com:ParsePlatform/Parse-SDK-Android.git'
-                url 'https://github.com/ParsePlatform/Parse-SDK-Android'
-            }
-
-            licenses {
-                license {
-                    name 'BSD License'
-                    url 'https://github.com/ParsePlatform/Parse-SDK-Android/blob/master/LICENSE'
-                    distribution 'repo'
-                }
-            }
-
-            developers {
-                developer {
-                    id 'parse'
-                    name 'Parse'
-                }
-            }
+        def basePom = {
+            name projName
+            artifactId = artifact
+            packaging 'aar'
+            description projDescription
+            url gitLink
         }
+
+        pom.project basePom << pomConfig
     }
 }
 
@@ -176,7 +180,7 @@ jacoco {
     toolVersion "0.7.1.201405082137"
 }
 
-task jacocoTestReport(type:JacocoReport, dependsOn: "testDebugUnitTest") {
+task jacocoTestReport(type: JacocoReport, dependsOn: "testDebugUnitTest") {
     group = "Reporting"
     description = "Generate Jacoco coverage reports"
 
@@ -209,3 +213,90 @@ task jacocoTestReport(type:JacocoReport, dependsOn: "testDebugUnitTest") {
 coveralls.jacocoReportPath = "${buildDir}/reports/jacoco/jacocoTestReport/jacocoTestReport.xml"
 
 //endregion
+
+// Requires apply plugin: 'com.jfrog.bintray'
+
+bintray {
+    user = System.getenv('BINTRAY_USER')
+    key = System.getenv('BINTRAY_API_KEY')
+
+    publications = ["MyPublication"]
+
+    publish = true
+    pkg {
+        repo = 'maven'
+        name = 'com.parse:parse-android'
+        userOrg = 'parse'
+        licenses = ['BSD License']
+        vcsUrl = 'https://github.com/parse-community/Parse-SDK-Android'
+        version {
+            name = project.version
+            desc = projDescription
+            released = new Date()
+            vcsTag = project.version
+
+            // Sonatype username/passwrod must be set for this operation to happen
+            mavenCentralSync {
+              sync = true
+              user = ossrhUsername
+              password = ossrhPassword
+              close = '1' // release automatically
+           }
+        }
+    }
+}
+
+// Create the publication with the pom configuration:
+apply plugin: 'maven-publish'
+
+publishing {
+    publications {
+        MyPublication(MavenPublication) {
+            groupId group
+            // We have to specify it here because otherwise Bintray's plugin will assume the artifact's name is Parse
+            artifactId artifact
+            artifacts = [androidSourcesJar, bundleRelease]
+            version version
+            pom.withXml {
+                def root = asNode()
+                root.appendNode('description', projDescription)
+                root.appendNode('name', projName)
+                root.appendNode('url', gitLink)
+                root.children().last() + pomConfig
+
+                // maven-publish workaround to include dependencies
+                def dependenciesNode = asNode().appendNode('dependencies')
+
+                //Iterate over the compile dependencies (we don't want the test ones), adding a <dependency> node for each
+                configurations.compile.allDependencies.each {
+                    def dependencyNode = dependenciesNode.appendNode('dependency')
+                    dependencyNode.appendNode('groupId', it.group)
+                    dependencyNode.appendNode('artifactId', it.name)
+                    dependencyNode.appendNode('version', it.version)
+                }
+
+            }
+        }
+    }
+}
+
+// End of Bintray plugin
+
+apply plugin: "com.jfrog.artifactory"
+
+artifactory {
+    contextUrl = 'https://oss.jfrog.org'
+    publish {
+        repository {
+            repoKey = 'oss-snapshot-local' // The Artifactory repository key to publish to
+
+            username = System.getenv('BINTRAY_USER')
+            password = System.getenv('BINTRAY_API_KEY')
+            maven = true
+        }
+        defaults {
+            publishArtifacts = true
+            publications('MyPublication')
+        }
+    }
+}

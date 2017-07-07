@@ -30,6 +30,7 @@ import bolts.Task;
 public class ParseInstallation extends ParseObject {
   private static final String TAG = "com.parse.ParseInstallation";
 
+  private static final String KEY_OBJECT_ID = "objectId";
   private static final String KEY_INSTALLATION_ID = "installationId";
   private static final String KEY_DEVICE_TYPE = "deviceType";
   private static final String KEY_APP_NAME = "appName";
@@ -45,7 +46,7 @@ public class ParseInstallation extends ParseObject {
   private static final List<String> READ_ONLY_FIELDS = Collections.unmodifiableList(
       Arrays.asList(KEY_DEVICE_TYPE, KEY_INSTALLATION_ID, KEY_DEVICE_TOKEN, KEY_PUSH_TYPE,
           KEY_TIME_ZONE, KEY_LOCALE, KEY_APP_VERSION, KEY_APP_NAME, KEY_PARSE_VERSION,
-          KEY_APP_IDENTIFIER));
+          KEY_APP_IDENTIFIER, KEY_OBJECT_ID));
 
   // TODO(mengyan): Inject into ParseInstallationInstanceController
   /* package */ static ParseCurrentInstallationController getCurrentInstallationController() {
@@ -95,6 +96,11 @@ public class ParseInstallation extends ParseObject {
   }
 
   @Override
+  public void setObjectId(String newObjectId) {
+    throw new RuntimeException("Installation's objectId cannot be changed");
+  }
+
+  @Override
   /* package */ boolean needsDefaultACL() {
     return false;
   }
@@ -135,6 +141,29 @@ public class ParseInstallation extends ParseObject {
         }
       });
     }
+  }
+
+  @Override
+  /* package */ Task<Void> saveAsync(final String sessionToken, final Task<Void> toAwait) {
+    return super.saveAsync(sessionToken, toAwait).continueWithTask(new Continuation<Void, Task<Void>>() {
+      @Override
+      public Task<Void> then(Task<Void> task) throws Exception {
+        // Retry the fetch as a save operation because this Installation was deleted on the server.
+        if (task.getError() != null
+            && task.getError() instanceof ParseException) {
+          int errCode = ((ParseException) task.getError()).getCode();
+          if (errCode == ParseException.OBJECT_NOT_FOUND
+              || (errCode == ParseException.MISSING_REQUIRED_FIELD_ERROR && getObjectId() == null)) {
+            synchronized (mutex) {
+              setState(new State.Builder(getState()).objectId(null).build());
+              markAllFieldsDirty();
+              return ParseInstallation.super.saveAsync(sessionToken, toAwait);
+            }
+          }
+        }
+        return task;
+      }
+    });
   }
 
   @Override

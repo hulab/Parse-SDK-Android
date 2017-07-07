@@ -20,12 +20,6 @@ public class ParseException extends Exception {
   public static final int OTHER_CAUSE = -1;
 
   /**
-   * Error code indicating that something has gone wrong with the server. If you get this error
-   * code, it is Parse's fault. Contact us at https://parse.com/help
-   */
-  public static final int INTERNAL_SERVER_ERROR = 1;
-
-  /**
    * Error code indicating the connection to the Parse servers failed.
    */
   public static final int CONNECTION_FAILED = 100;
@@ -139,6 +133,11 @@ public class ParseException extends Exception {
    * Error code indicating that the email address was invalid.
    */
   public static final int INVALID_EMAIL_ADDRESS = 125;
+
+  /**
+   * Error code indicating that required field is missing.
+   */
+  public static final int MISSING_REQUIRED_FIELD_ERROR = 135;
 
   /**
    * Error code indicating that a unique field was given a value that is already taken.

@@ -14,7 +14,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
-import org.robolectric.RobolectricGradleTestRunner;
+import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.skyscreamer.jsonassert.JSONCompareMode;
 
@@ -38,8 +38,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.skyscreamer.jsonassert.JSONAssert.assertEquals;
 
-@RunWith(RobolectricGradleTestRunner.class)
-@Config(constants = BuildConfig.class, sdk = 21)
+@RunWith(RobolectricTestRunner.class)
+@Config(constants = BuildConfig.class, sdk = TestHelper.ROBOLECTRIC_SDK_VERSION)
 public class ParsePushTest {
 
   @Before
@@ -206,6 +206,26 @@ public class ParsePushTest {
 
   //endregion
 
+  //region testSetPushTime
+
+  // We only test a basic case here to make sure logic in ParsePush is correct, more comprehensive
+  // builder test cases should be in ParsePushState test
+  @Test
+  public void testSetPushTime() throws Exception {
+    ParsePush push = new ParsePush();
+    long time = System.currentTimeMillis() / 1000 + 1000;
+    push.setPushTime(time);
+
+    // Right now it is hard for us to test a builder, so we build a state to test the builder is
+    // set correctly
+    // We have to set message otherwise build() will throw an exception
+    push.setMessage("message");
+    ParsePush.State state = push.builder.build();
+    assertEquals(time, state.pushTime().longValue());
+  }
+
+  //endregion
+
   //region testSetPushToIOS
 
   // We only test a basic case here to make sure logic in ParsePush is correct, more comprehensive
@@ -276,8 +296,7 @@ public class ParsePushTest {
     when(controller.subscribeInBackground(anyString())).thenReturn(Task.<Void>forResult(null));
     ParseCorePlugins.getInstance().registerPushChannelsController(controller);
 
-    ParsePush push = new ParsePush();
-    ParseTaskUtils.wait(push.subscribeInBackground("test"));
+    ParseTaskUtils.wait(ParsePush.subscribeInBackground("test"));
     verify(controller, times(1)).subscribeInBackground("test");
   }
 
@@ -290,7 +309,7 @@ public class ParsePushTest {
     ParsePush push = new ParsePush();
     final Semaphore done = new Semaphore(0);
     final Capture<Exception> exceptionCapture = new Capture<>();
-    push.subscribeInBackground("test", new SaveCallback() {
+    ParsePush.subscribeInBackground("test", new SaveCallback() {
       @Override
       public void done(ParseException e) {
         exceptionCapture.set(e);
@@ -309,8 +328,7 @@ public class ParsePushTest {
     when(controller.subscribeInBackground(anyString())).thenReturn(Task.<Void>forError(exception));
     ParseCorePlugins.getInstance().registerPushChannelsController(controller);
 
-    ParsePush push = new ParsePush();
-    Task<Void> pushTask = push.subscribeInBackground("test");
+    Task<Void> pushTask = ParsePush.subscribeInBackground("test");
     pushTask.waitForCompletion();
     verify(controller, times(1)).subscribeInBackground("test");
     assertTrue(pushTask.isFaulted());
@@ -327,7 +345,7 @@ public class ParsePushTest {
     ParsePush push = new ParsePush();
     final Semaphore done = new Semaphore(0);
     final Capture<Exception> exceptionCapture = new Capture<>();
-    push.subscribeInBackground("test", new SaveCallback() {
+    ParsePush.subscribeInBackground("test", new SaveCallback() {
       @Override
       public void done(ParseException e) {
         exceptionCapture.set(e);
@@ -349,8 +367,7 @@ public class ParsePushTest {
     when(controller.unsubscribeInBackground(anyString())).thenReturn(Task.<Void>forResult(null));
     ParseCorePlugins.getInstance().registerPushChannelsController(controller);
 
-    ParsePush push = new ParsePush();
-    ParseTaskUtils.wait(push.unsubscribeInBackground("test"));
+    ParseTaskUtils.wait(ParsePush.unsubscribeInBackground("test"));
     verify(controller, times(1)).unsubscribeInBackground("test");
   }
 
@@ -360,10 +377,9 @@ public class ParsePushTest {
     when(controller.unsubscribeInBackground(anyString())).thenReturn(Task.<Void>forResult(null));
     ParseCorePlugins.getInstance().registerPushChannelsController(controller);
 
-    ParsePush push = new ParsePush();
     final Semaphore done = new Semaphore(0);
     final Capture<Exception> exceptionCapture = new Capture<>();
-    push.unsubscribeInBackground("test", new SaveCallback() {
+    ParsePush.unsubscribeInBackground("test", new SaveCallback() {
       @Override
       public void done(ParseException e) {
         exceptionCapture.set(e);
@@ -383,8 +399,7 @@ public class ParsePushTest {
         .thenReturn(Task.<Void>forError(exception));
     ParseCorePlugins.getInstance().registerPushChannelsController(controller);
 
-    ParsePush push = new ParsePush();
-    Task<Void> pushTask = push.unsubscribeInBackground("test");
+    Task<Void> pushTask = ParsePush.unsubscribeInBackground("test");
     pushTask.waitForCompletion();
     verify(controller, times(1)).unsubscribeInBackground("test");
     assertTrue(pushTask.isFaulted());
@@ -402,7 +417,7 @@ public class ParsePushTest {
     ParsePush push = new ParsePush();
     final Semaphore done = new Semaphore(0);
     final Capture<Exception> exceptionCapture = new Capture<>();
-    push.unsubscribeInBackground("test", new SaveCallback() {
+    ParsePush.unsubscribeInBackground("test", new SaveCallback() {
       @Override
       public void done(ParseException e) {
         exceptionCapture.set(e);

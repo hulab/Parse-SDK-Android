@@ -62,7 +62,7 @@ import bolts.TaskCompletionSource;
     return executor;
   }
 
-  /* package */ static final ExecutorService NETWORK_EXECUTOR = newThreadPoolExecutor(
+  protected static final ExecutorService NETWORK_EXECUTOR = newThreadPoolExecutor(
       CORE_POOL_SIZE, MAX_POOL_SIZE, KEEP_ALIVE_TIME, TimeUnit.SECONDS,
       new LinkedBlockingQueue<Runnable>(MAX_QUEUE_SIZE), sThreadFactory);
 
@@ -146,6 +146,7 @@ import bolts.TaskCompletionSource;
           }
         }
         return task;
+        // Jump off the network executor so this task continuations won't steal network threads
       }
     }, Task.BACKGROUND_EXECUTOR);
   }

@@ -8,6 +8,8 @@
  */
 package com.parse;
 
+import android.os.Parcel;
+
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
@@ -17,7 +19,7 @@ import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Matchers;
-import org.robolectric.RobolectricGradleTestRunner;
+import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 import java.util.Collections;
@@ -49,25 +51,25 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 // For ParseExecutors.main()
-@RunWith(RobolectricGradleTestRunner.class)
-@Config(constants = BuildConfig.class, sdk = 21)
-public class ParseUserTest {
+@RunWith(RobolectricTestRunner.class)
+@Config(constants = BuildConfig.class, sdk = TestHelper.ROBOLECTRIC_SDK_VERSION)
+public class ParseUserTest extends ResetPluginsParseTest {
 
   @Rule
   public ExpectedException thrown= ExpectedException.none();
 
   @Before
-  public void setUp() {
+  public void setUp() throws Exception {
+    super.setUp();
     ParseObject.registerSubclass(ParseUser.class);
     ParseObject.registerSubclass(ParseSession.class);
   }
 
   @After
-  public void tearDown() {
+  public void tearDown() throws Exception {
+    super.tearDown();
     ParseObject.unregisterSubclass(ParseUser.class);
     ParseObject.unregisterSubclass(ParseSession.class);
-    ParseCorePlugins.getInstance().reset();
-    ParsePlugins.reset();
     Parse.disableLocalDatastore();
   }
 
@@ -94,6 +96,39 @@ public class ParseUserTest {
       assertTrue(e.getMessage().contains("Cannot modify"));
     }
   }
+
+  // region Parcelable
+
+  @Test
+  public void testOnSaveRestoreState() throws Exception {
+    ParseUser user = new ParseUser();
+    user.setObjectId("objId");
+    user.setIsCurrentUser(true);
+
+    Parcel parcel = Parcel.obtain();
+    user.writeToParcel(parcel, 0);
+    parcel.setDataPosition(0);
+    user = (ParseUser) ParseObject.CREATOR.createFromParcel(parcel);
+    assertTrue(user.isCurrentUser());
+  }
+
+  @Test
+  public void testParcelableState() throws Exception {
+    ParseUser.State state = new ParseUser.State.Builder()
+        .objectId("test")
+        .isNew(true)
+        .build();
+    ParseUser user = ParseObject.from(state);
+    assertTrue(user.isNew());
+
+    Parcel parcel = Parcel.obtain();
+    user.writeToParcel(parcel, 0);
+    parcel.setDataPosition(0);
+    user = (ParseUser) ParseObject.CREATOR.createFromParcel(parcel);
+    assertTrue(user.isNew());
+  }
+
+  // endregion
 
   //region SignUpAsync
 

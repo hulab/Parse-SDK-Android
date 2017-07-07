@@ -22,12 +22,12 @@ import bolts.Task;
  * Request returns a byte array of the response and provides a callback the progress of the data
  * read from the network.
  */
-/** package */ class ParseAWSRequest extends ParseRequest<Void> {
+/** package */ class ParseFileRequest extends ParseRequest<Void> {
 
   // The temp file is used to save the ParseFile content when we fetch it from server
   private final File tempFile;
 
-  public ParseAWSRequest(ParseHttpRequest.Method method, String url, File tempFile) {
+  public ParseFileRequest(ParseHttpRequest.Method method, String url, File tempFile) {
     super(method, url);
     this.tempFile = tempFile;
   }
@@ -41,7 +41,7 @@ import bolts.Task;
     } else {
       String action = method == ParseHttpRequest.Method.GET ? "Download from" : "Upload to";
       return Task.forError(new ParseException(ParseException.CONNECTION_FAILED, String.format(
-        "%s S3 failed. %s", action, response.getReasonPhrase())));
+        "%s file server failed. %s", action, response.getReasonPhrase())));
     }
 
     if (method != ParseHttpRequest.Method.GET) {
@@ -54,9 +54,10 @@ import bolts.Task;
         long totalSize = response.getTotalSize();
         long downloadedSize = 0;
         InputStream responseStream = null;
+        FileOutputStream tempFileStream = null;
         try {
           responseStream = response.getContent();
-          FileOutputStream tempFileStream = ParseFileUtils.openOutputStream(tempFile);
+          tempFileStream = ParseFileUtils.openOutputStream(tempFile);
 
           int nRead;
           byte[] data = new byte[32 << 10]; // 32KB
@@ -73,6 +74,7 @@ import bolts.Task;
           return null;
         } finally {
           ParseIOUtils.closeQuietly(responseStream);
+          ParseIOUtils.closeQuietly(tempFileStream);
         }
       }
     }, ParseExecutors.io());

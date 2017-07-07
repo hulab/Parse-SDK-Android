@@ -8,8 +8,14 @@
  */
 package com.parse;
 
-import org.junit.Test;
+import android.os.Parcel;
 
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
+
+import java.util.Arrays;
 import java.util.Date;
 
 import static org.junit.Assert.assertEquals;
@@ -17,8 +23,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.contains;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(constants = BuildConfig.class, sdk = TestHelper.ROBOLECTRIC_SDK_VERSION)
 public class ParseObjectStateTest {
 
   @Test
@@ -30,6 +37,7 @@ public class ParseObjectStateTest {
     assertEquals(-1, state.updatedAt());
     assertFalse(state.isComplete());
     assertTrue(state.keySet().isEmpty());
+    assertTrue(state.availableKeys().isEmpty());
   }
 
   @Test
@@ -62,6 +70,7 @@ public class ParseObjectStateTest {
         .isComplete(true)
         .put("foo", "bar")
         .put("baz", "qux")
+        .availableKeys(Arrays.asList("safe", "keys"))
         .build();
     ParseObject.State copy = new ParseObject.State.Builder(state).build();
     assertEquals(state.className(), copy.className());
@@ -72,6 +81,42 @@ public class ParseObjectStateTest {
     assertEquals(state.keySet().size(), copy.keySet().size());
     assertEquals(state.get("foo"), copy.get("foo"));
     assertEquals(state.get("baz"), copy.get("baz"));
+    assertEquals(state.availableKeys().size(), copy.availableKeys().size());
+    assertTrue(state.availableKeys().containsAll(copy.availableKeys()));
+    assertTrue(copy.availableKeys().containsAll(state.availableKeys()));
+  }
+
+  @Test
+  public void testParcelable() {
+    long updatedAt = System.currentTimeMillis();
+    long createdAt = updatedAt + 10;
+
+    ParseObject.State state = new ParseObject.State.Builder("TestObject")
+        .objectId("fake")
+        .createdAt(new Date(createdAt))
+        .updatedAt(new Date(updatedAt))
+        .isComplete(true)
+        .put("foo", "bar")
+        .put("baz", "qux")
+        .availableKeys(Arrays.asList("safe", "keys"))
+        .build();
+
+    Parcel parcel = Parcel.obtain();
+    state.writeToParcel(parcel, ParseParcelEncoder.get());
+    parcel.setDataPosition(0);
+    ParseObject.State copy = ParseObject.State.createFromParcel(parcel, ParseParcelDecoder.get());
+
+    assertEquals(state.className(), copy.className());
+    assertEquals(state.objectId(), copy.objectId());
+    assertEquals(state.createdAt(), copy.createdAt());
+    assertEquals(state.updatedAt(), copy.updatedAt());
+    assertEquals(state.isComplete(), copy.isComplete());
+    assertEquals(state.keySet().size(), copy.keySet().size());
+    assertEquals(state.get("foo"), copy.get("foo"));
+    assertEquals(state.get("baz"), copy.get("baz"));
+    assertEquals(state.availableKeys().size(), copy.availableKeys().size());
+    assertTrue(state.availableKeys().containsAll(copy.availableKeys()));
+    assertTrue(copy.availableKeys().containsAll(state.availableKeys()));
   }
 
   @Test
@@ -121,5 +166,6 @@ public class ParseObjectStateTest {
     assertTrue(string.contains("updatedAt"));
     assertTrue(string.contains("isComplete"));
     assertTrue(string.contains("serverData"));
+    assertTrue(string.contains("availableKeys"));
   }
 }

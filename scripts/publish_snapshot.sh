@@ -1,7 +1,7 @@
 #!/bin/bash
 # Publishes SNAPSHOTs
 
-REPO_SLUG=ParsePlatform/Parse-SDK-Android
+REPO_SLUG=parse-community/Parse-SDK-Android
 BRANCH=master
 
 set -e
@@ -14,7 +14,6 @@ elif [ "$TRAVIS_BRANCH" != "$BRANCH" ]; then
   echo "Skipping publishing SNAPSHOT: wrong branch. Expected '$BRANCH' but was '$TRAVIS_BRANCH'"
 else
   echo "Publishing SNAPSHOT..."
-  ./gradlew uploadArchives
+  ./gradlew artifactoryPublish
   echo "SNAPSHOT published!"
 fi
-
