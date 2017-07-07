@@ -52,345 +52,37 @@ import bolts.TaskCompletionSource;
  * existing data to retrieve.
  */
 public class ParseObject implements Parcelable {
-  private static final String AUTO_CLASS_NAME = "_Automatic";
-  /* package */ static final String VERSION_NAME = BuildConfig.VERSION_NAME;
-  private static final String TAG = "ParseObject";
-
-  /*
-  REST JSON Keys
-  */
-  private static final String KEY_OBJECT_ID = "objectId";
-  private static final String KEY_CLASS_NAME = "className";
-  private static final String KEY_ACL = "ACL";
-  private static final String KEY_CREATED_AT = "createdAt";
-  private static final String KEY_UPDATED_AT = "updatedAt";
-
-  /*
-  Internal JSON Keys - Used to store internal data when persisting {@code ParseObject}s locally.
-  */
-  private static final String KEY_COMPLETE = "__complete";
-  private static final String KEY_OPERATIONS = "__operations";
-  // Array of keys selected when querying for the object. Helps decoding nested {@code ParseObject}s
-  // correctly, and helps constructing the {@code State.availableKeys()} set.
-  private static final String KEY_SELECTED_KEYS = "__selectedKeys";
-  /* package */ static final String KEY_IS_DELETING_EVENTUALLY = "__isDeletingEventually";
-  // Because Grantland messed up naming this... We'll only try to read from this for backward
-  // compat, but I think we can be safe to assume any deleteEventuallys from long ago are obsolete
-  // and not check after a while
-  private static final String KEY_IS_DELETING_EVENTUALLY_OLD = "isDeletingEventually";
-
-  private static ParseObjectController getObjectController() {
-    return ParseCorePlugins.getInstance().getObjectController();
-  }
-
-  private static LocalIdManager getLocalIdManager() {
-    return ParseCorePlugins.getInstance().getLocalIdManager();
-  }
-
-  private static ParseObjectSubclassingController getSubclassingController() {
-    return ParseCorePlugins.getInstance().getSubclassingController();
-  }
-
-  /** package */ static class State {
-
-    public static Init<?> newBuilder(String className) {
-      if ("_User".equals(className)) {
-        return new ParseUser.State.Builder();
-      }
-      return new Builder(className);
-    }
-
-    /* package */ static State createFromParcel(Parcel source, ParseParcelDecoder decoder) {
-      String className = source.readString();
-      if ("_User".equals(className)) {
-        return new ParseUser.State(source, className, decoder);
-      }
-      return new State(source, className, decoder);
-    }
-
-    /** package */ static abstract class Init<T extends Init> {
-
-      private final String className;
-      private String objectId;
-      private long createdAt = -1;
-      private long updatedAt = -1;
-      private boolean isComplete;
-      private Set<String> availableKeys = new HashSet<>();
-      /* package */ Map<String, Object> serverData = new HashMap<>();
-
-      public Init(String className) {
-        this.className = className;
-      }
-
-      /* package */ Init(State state) {
-        className = state.className();
-        objectId = state.objectId();
-        createdAt = state.createdAt();
-        updatedAt = state.updatedAt();
-        availableKeys = state.availableKeys();
-        for (String key : state.keySet()) {
-          serverData.put(key, state.get(key));
-          availableKeys.add(key);
-        }
-        isComplete = state.isComplete();
-      }
-
-      /* package */ abstract T self();
-
-      /* package */ abstract <S extends State> S build();
-
-      public T objectId(String objectId) {
-        this.objectId = objectId;
-        return self();
-      }
-
-      public T createdAt(Date createdAt) {
-        this.createdAt = createdAt.getTime();
-        return self();
-      }
-
-      public T createdAt(long createdAt) {
-        this.createdAt = createdAt;
-        return self();
-      }
-
-      public T updatedAt(Date updatedAt) {
-        this.updatedAt = updatedAt.getTime();
-        return self();
-      }
-
-      public T updatedAt(long updatedAt) {
-        this.updatedAt = updatedAt;
-        return self();
-      }
-
-      public T isComplete(boolean complete) {
-        isComplete = complete;
-        return self();
-      }
-
-      public T put(String key, Object value) {
-        serverData.put(key, value);
-        availableKeys.add(key);
-        return self();
-      }
-
-      public T remove(String key) {
-        serverData.remove(key);
-        return self();
-      }
-
-      public T availableKeys(Collection<String> keys) {
-        for (String key : keys) {
-          availableKeys.add(key);
-        }
-        return self();
-      }
-
-      public T clear() {
-        objectId = null;
-        createdAt = -1;
-        updatedAt = -1;
-        isComplete = false;
-        serverData.clear();
-        availableKeys.clear();
-        return self();
-      }
-
-      /**
-       * Applies a {@code State} on top of this {@code Builder} instance.
-       *
-       * @param other The {@code State} to apply over this instance.
-       * @return A new {@code Builder} instance.
-       */
-      public T apply(State other) {
-        if (other.objectId() != null) {
-          objectId(other.objectId());
-        }
-        if (other.createdAt() > 0) {
-          createdAt(other.createdAt());
-        }
-        if (other.updatedAt() > 0) {
-          updatedAt(other.updatedAt());
-        }
-        isComplete(isComplete || other.isComplete());
-        for (String key : other.keySet()) {
-          put(key, other.get(key));
-        }
-        availableKeys(other.availableKeys());
-        return self();
-      }
-
-      public T apply(ParseOperationSet operations) {
-        for (String key : operations.keySet()) {
-          ParseFieldOperation operation = operations.get(key);
-          Object oldValue = serverData.get(key);
-          Object newValue = operation.apply(oldValue, key);
-          if (newValue != null) {
-            put(key, newValue);
-          } else {
-            remove(key);
-          }
-        }
-        return self();
-      }
-    }
-
-    /* package */ static class Builder extends Init<Builder> {
-
-      public Builder(String className) {
-        super(className);
-      }
-
-      public Builder(State state) {
-        super(state);
-      }
-
-      @Override
-      /* package */ Builder self() {
-        return this;
-      }
-
-      public State build() {
-        return new State(this);
-      }
-    }
-
-    private final String className;
-    private final String objectId;
-    private final long createdAt;
-    private final long updatedAt;
-    private final Map<String, Object> serverData;
-    private final Set<String> availableKeys;
-    private final boolean isComplete;
-
-    /* package */ State(Init<?> builder) {
-      className = builder.className;
-      objectId = builder.objectId;
-      createdAt = builder.createdAt;
-      updatedAt = builder.updatedAt > 0
-          ? builder.updatedAt
-          : createdAt;
-      serverData = Collections.unmodifiableMap(new HashMap<>(builder.serverData));
-      isComplete = builder.isComplete;
-      availableKeys = new HashSet<>(builder.availableKeys);
-    }
-
-    /* package */ State(Parcel parcel, String clazz, ParseParcelDecoder decoder) {
-      className = clazz; // Already read
-      objectId = parcel.readByte() == 1 ? parcel.readString() : null;
-      createdAt = parcel.readLong();
-      long updated = parcel.readLong();
-      updatedAt = updated > 0 ? updated : createdAt;
-      int size = parcel.readInt();
-      HashMap<String, Object> map = new HashMap<>();
-      for (int i = 0; i < size; i++) {
-        String key = parcel.readString();
-        Object obj = decoder.decode(parcel);
-        map.put(key, obj);
-      }
-      serverData = Collections.unmodifiableMap(map);
-      isComplete = parcel.readByte() == 1;
-      List<String> available = new ArrayList<>();
-      parcel.readStringList(available);
-      availableKeys = new HashSet<>(available);
-    }
-
-    @SuppressWarnings("unchecked")
-    public <T extends Init<?>> T newBuilder() {
-      return (T) new Builder(this);
-    }
-
-    public String className() {
-      return className;
-    }
-
-    public String objectId() {
-      return objectId;
-    }
-
-    public long createdAt() {
-      return createdAt;
-    }
-
-    public long updatedAt() {
-      return updatedAt;
-    }
-
-    public boolean isComplete() {
-      return isComplete;
-    }
-
-    public Object get(String key) {
-      return serverData.get(key);
-    }
-
-    public Set<String> keySet() {
-      return serverData.keySet();
-    }
-
-    // Available keys for this object. With respect to keySet(), this includes also keys that are
-    // undefined in the server, but that should be accessed without throwing.
-    // These extra keys come e.g. from ParseQuery.selectKeys(). Selected keys must be available to
-    // get() methods even if undefined, for consistency with complete objects.
-    // For a complete object, this set is equal to keySet().
-    public Set<String> availableKeys() {
-      return availableKeys;
-    }
-
-    protected void writeToParcel(Parcel dest, ParseParcelEncoder encoder) {
-      dest.writeString(className);
-      dest.writeByte(objectId != null ? (byte) 1 : 0);
-      if (objectId != null) {
-        dest.writeString(objectId);
-      }
-      dest.writeLong(createdAt);
-      dest.writeLong(updatedAt);
-      dest.writeInt(serverData.size());
-      Set<String> keys = serverData.keySet();
-      for (String key : keys) {
-        dest.writeString(key);
-        encoder.encode(serverData.get(key), dest);
-      }
-      dest.writeByte(isComplete ? (byte) 1 : 0);
-      dest.writeStringList(new ArrayList<>(availableKeys));
-    }
-
-    @Override
-    public String toString() {
-      return String.format(Locale.US, "%s@%s[" +
-              "className=%s, objectId=%s, createdAt=%d, updatedAt=%d, isComplete=%s, " +
-              "serverData=%s, availableKeys=%s]",
-          getClass().getName(),
-          Integer.toHexString(hashCode()),
-          className,
-          objectId,
-          createdAt,
-          updatedAt,
-          isComplete,
-          serverData,
-          availableKeys);
-    }
-  }
-
-    /* package */ final Object mutex = new Object();
-    /* package */ final TaskQueue taskQueue = new TaskQueue();
-
-    private State state;
-    /* package */ final LinkedList<ParseOperationSet> operationSetQueue;
-
-    // Cached State
-    private final Map<String, Object> estimatedData;
-
-  /* package */ String localId;
-  private final ParseMulticastDelegate<ParseObject> saveEvent = new ParseMulticastDelegate<>();
-
-  /* package */ boolean isDeleted;
-  /* package */ boolean isDeleting; // Since delete ops are queued, we don't need a counter.
-  //TODO (grantland): Derive this off the EventuallyPins as opposed to +/- count.
-  /* package */ int isDeletingEventually;
-  private boolean ldsEnabledWhenParceling;
-
+    /**
+     * Default name for pinning if not specified.
+     *
+     * @see #pin()
+     * @see #unpin()
+     */
+    public static final String DEFAULT_PIN = "_default";
+    /* package */ static final String VERSION_NAME = BuildConfig.VERSION_NAME;
+    /* package */ static final String KEY_IS_DELETING_EVENTUALLY = "__isDeletingEventually";
+    private static final String AUTO_CLASS_NAME = "_Automatic";
+    private static final String TAG = "ParseObject";
+    /*
+    REST JSON Keys
+    */
+    private static final String KEY_OBJECT_ID = "objectId";
+    private static final String KEY_CLASS_NAME = "className";
+    private static final String KEY_ACL = "ACL";
+    private static final String KEY_CREATED_AT = "createdAt";
+    private static final String KEY_UPDATED_AT = "updatedAt";
+    /*
+    Internal JSON Keys - Used to store internal data when persisting {@code ParseObject}s locally.
+    */
+    private static final String KEY_COMPLETE = "__complete";
+    private static final String KEY_OPERATIONS = "__operations";
+    // Array of keys selected when querying for the object. Helps decoding nested {@code ParseObject}s
+    // correctly, and helps constructing the {@code State.availableKeys()} set.
+    private static final String KEY_SELECTED_KEYS = "__selectedKeys";
+    // Because Grantland messed up naming this... We'll only try to read from this for backward
+    // compat, but I think we can be safe to assume any deleteEventuallys from long ago are obsolete
+    // and not check after a while
+    private static final String KEY_IS_DELETING_EVENTUALLY_OLD = "isDeletingEventually";
     private static final ThreadLocal<String> isCreatingPointerForObjectId =
             new ThreadLocal<String>() {
                 @Override
@@ -398,7 +90,6 @@ public class ParseObject implements Parcelable {
                     return null;
                 }
             };
-
     /*
    * This is used only so that we can pass it to createWithoutData as the objectId to make it create
    * an unfetched pointer that has no objectId. This is useful only in the context of the offline
@@ -407,6 +98,30 @@ public class ParseObject implements Parcelable {
    */
   /* package */ private static final String NEW_OFFLINE_OBJECT_ID_PLACEHOLDER =
             "*** Offline Object ***";
+    public final static Creator<ParseObject> CREATOR = new Creator<ParseObject>() {
+        @Override
+        public ParseObject createFromParcel(Parcel source) {
+            return ParseObject.createFromParcel(source, new ParseObjectParcelDecoder());
+        }
+
+        @Override
+        public ParseObject[] newArray(int size) {
+            return new ParseObject[size];
+        }
+    };
+    /* package */ final Object mutex = new Object();
+    /* package */ final TaskQueue taskQueue = new TaskQueue();
+    /* package */ final LinkedList<ParseOperationSet> operationSetQueue;
+    // Cached State
+    private final Map<String, Object> estimatedData;
+    private final ParseMulticastDelegate<ParseObject> saveEvent = new ParseMulticastDelegate<>();
+    /* package */ String localId;
+    /* package */ boolean isDeleted;
+    /* package */ boolean isDeleting; // Since delete ops are queued, we don't need a counter.
+    //TODO (grantland): Derive this off the EventuallyPins as opposed to +/- count.
+  /* package */ int isDeletingEventually;
+    private State state;
+    private boolean ldsEnabledWhenParceling;
 
     /**
      * The base class constructor to call in subclasses. Uses the class name specified with the
@@ -469,6 +184,18 @@ public class ParseObject implements Parcelable {
         if (store != null) {
             store.registerNewObject(this);
         }
+    }
+
+    private static ParseObjectController getObjectController() {
+        return ParseCorePlugins.getInstance().getObjectController();
+    }
+
+    private static LocalIdManager getLocalIdManager() {
+        return ParseCorePlugins.getInstance().getLocalIdManager();
+    }
+
+    private static ParseObjectSubclassingController getSubclassingController() {
+        return ParseCorePlugins.getInstance().getSubclassingController();
     }
 
     /**
@@ -651,87 +378,1041 @@ public class ParseObject implements Parcelable {
         return object;
     }
 
-  /**
-   * Creates a new {@code ParseObject} based on data from the Parse server.
-   * @param json
-   *          The object's data.
-   * @param defaultClassName
-   *          The className of the object, if none is in the JSON.
-   * @param decoder
-   *          Delegate for knowing how to decode the values in the JSON.
-   * @param selectedKeys
-   *          Set of keys selected when quering for this object. If none, the object is assumed to
-   *          be complete, i.e. this is all the data for the object on the server.
-   */
-  /* package */ static <T extends ParseObject> T fromJSON(JSONObject json, String defaultClassName,
-                                                          ParseDecoder decoder,
-                                                          Set<String> selectedKeys) {
-    if (selectedKeys != null && !selectedKeys.isEmpty()) {
-      JSONArray keys = new JSONArray(selectedKeys);
-      try {
-        json.put(KEY_SELECTED_KEYS, keys);
-      } catch (JSONException e) {
-        throw new RuntimeException(e);
-      }
+    /**
+     * Creates a new {@code ParseObject} based on data from the Parse server.
+     *
+     * @param json             The object's data.
+     * @param defaultClassName The className of the object, if none is in the JSON.
+     * @param decoder          Delegate for knowing how to decode the values in the JSON.
+     * @param selectedKeys     Set of keys selected when quering for this object. If none, the object is assumed to
+     *                         be complete, i.e. this is all the data for the object on the server.
+     */
+  /* package */
+    static <T extends ParseObject> T fromJSON(JSONObject json, String defaultClassName,
+                                              ParseDecoder decoder,
+                                              Set<String> selectedKeys) {
+        if (selectedKeys != null && !selectedKeys.isEmpty()) {
+            JSONArray keys = new JSONArray(selectedKeys);
+            try {
+                json.put(KEY_SELECTED_KEYS, keys);
+            } catch (JSONException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return fromJSON(json, defaultClassName, decoder);
     }
-    return fromJSON(json, defaultClassName, decoder);
-  }
 
-  /**
-   * Creates a new {@code ParseObject} based on data from the Parse server.
-   * @param json
-   *          The object's data. It is assumed to be complete, unless the JSON has the
-   *          {@link #KEY_SELECTED_KEYS} key.
-   * @param defaultClassName
-   *          The className of the object, if none is in the JSON.
-   * @param decoder
-   *          Delegate for knowing how to decode the values in the JSON.
-   */
-  /* package */ static <T extends ParseObject> T fromJSON(JSONObject json, String defaultClassName,
-                                                          ParseDecoder decoder) {
-    String className = json.optString(KEY_CLASS_NAME, defaultClassName);
-    if (className == null) {
-      return null;
+    /**
+     * Creates a new {@code ParseObject} based on data from the Parse server.
+     *
+     * @param json             The object's data. It is assumed to be complete, unless the JSON has the
+     *                         {@link #KEY_SELECTED_KEYS} key.
+     * @param defaultClassName The className of the object, if none is in the JSON.
+     * @param decoder          Delegate for knowing how to decode the values in the JSON.
+     */
+  /* package */
+    static <T extends ParseObject> T fromJSON(JSONObject json, String defaultClassName,
+                                              ParseDecoder decoder) {
+        String className = json.optString(KEY_CLASS_NAME, defaultClassName);
+        if (className == null) {
+            return null;
+        }
+        String objectId = json.optString(KEY_OBJECT_ID, null);
+        boolean isComplete = !json.has(KEY_SELECTED_KEYS);
+        @SuppressWarnings("unchecked")
+        T object = (T) ParseObject.createWithoutData(className, objectId);
+        State newState = object.mergeFromServer(object.getState(), json, decoder, isComplete);
+        object.setState(newState);
+        return object;
     }
-    String objectId = json.optString(KEY_OBJECT_ID, null);
-    boolean isComplete = !json.has(KEY_SELECTED_KEYS);
-    @SuppressWarnings("unchecked")
-    T object = (T) ParseObject.createWithoutData(className, objectId);
-    State newState = object.mergeFromServer(object.getState(), json, decoder, isComplete);
-    object.setState(newState);
-    return object;
-  }
-
-  /**
-   * Method used by parse server webhooks implementation to convert raw JSON to Parse Object
-   *
-   * Method is used by parse server webhooks implementation to create a
-   * new {@code ParseObject} from the incoming json payload. The method is different from
-   * {@link #fromJSON(JSONObject, String, ParseDecoder, Set)} ()} in that it calls
-   * {@link #build(JSONObject, ParseDecoder)} which populates operation queue
-   * rather then the server data from the incoming JSON, as at external server the incoming
-   * JSON may not represent the actual server data. Also it handles
-   * {@link ParseFieldOperations} separately.
-   *
-   * @param json
-   *          The object's data.
-   * @param decoder
-   *          Delegate for knowing how to decode the values in the JSON.
-   */
-  /* package */ static <T extends ParseObject> T fromJSONPayload(
-      JSONObject json, ParseDecoder decoder) {
-    String className = json.optString(KEY_CLASS_NAME);
-    if (className == null || ParseTextUtils.isEmpty(className)) {
-      return null;
-    }
-    String objectId = json.optString(KEY_OBJECT_ID, null);
-    @SuppressWarnings("unchecked")
-    T object = (T) ParseObject.createWithoutData(className, objectId);
-    object.build(json, decoder);
-    return object;
-  }
 
     //region Getter/Setter helper methods
+
+    /**
+     * Method used by parse server webhooks implementation to convert raw JSON to Parse Object
+     * <p>
+     * Method is used by parse server webhooks implementation to create a
+     * new {@code ParseObject} from the incoming json payload. The method is different from
+     * {@link #fromJSON(JSONObject, String, ParseDecoder, Set)} ()} in that it calls
+     * {@link #build(JSONObject, ParseDecoder)} which populates operation queue
+     * rather then the server data from the incoming JSON, as at external server the incoming
+     * JSON may not represent the actual server data. Also it handles
+     * {@link ParseFieldOperations} separately.
+     *
+     * @param json    The object's data.
+     * @param decoder Delegate for knowing how to decode the values in the JSON.
+     */
+  /* package */
+    static <T extends ParseObject> T fromJSONPayload(
+            JSONObject json, ParseDecoder decoder) {
+        String className = json.optString(KEY_CLASS_NAME);
+        if (className == null || ParseTextUtils.isEmpty(className)) {
+            return null;
+        }
+        String objectId = json.optString(KEY_OBJECT_ID, null);
+        @SuppressWarnings("unchecked")
+        T object = (T) ParseObject.createWithoutData(className, objectId);
+        object.build(json, decoder);
+        return object;
+    }
+
+    /**
+     * This deletes all of the objects from the given List.
+     */
+    private static <T extends ParseObject> Task<Void> deleteAllAsync(
+            final List<T> objects, final String sessionToken) {
+        if (objects.size() == 0) {
+            return Task.forResult(null);
+        }
+
+        // Create a list of unique objects based on objectIds
+        int objectCount = objects.size();
+        final List<ParseObject> uniqueObjects = new ArrayList<>(objectCount);
+        final HashSet<String> idSet = new HashSet<>();
+        for (int i = 0; i < objectCount; i++) {
+            ParseObject obj = objects.get(i);
+            if (!idSet.contains(obj.getObjectId())) {
+                idSet.add(obj.getObjectId());
+                uniqueObjects.add(obj);
+            }
+        }
+
+        return enqueueForAll(uniqueObjects, new Continuation<Void, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<Void> toAwait) throws Exception {
+                return deleteAllAsync(uniqueObjects, sessionToken, toAwait);
+            }
+        });
+    }
+
+    private static <T extends ParseObject> Task<Void> deleteAllAsync(
+            final List<T> uniqueObjects, final String sessionToken, Task<Void> toAwait) {
+        return toAwait.continueWithTask(new Continuation<Void, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<Void> task) throws Exception {
+                int objectCount = uniqueObjects.size();
+                List<ParseObject.State> states = new ArrayList<>(objectCount);
+                for (int i = 0; i < objectCount; i++) {
+                    ParseObject object = uniqueObjects.get(i);
+                    object.validateDelete();
+                    states.add(object.getState());
+                }
+                List<Task<Void>> batchTasks = getObjectController().deleteAllAsync(states, sessionToken);
+
+                List<Task<Void>> tasks = new ArrayList<>(objectCount);
+                for (int i = 0; i < objectCount; i++) {
+                    Task<Void> batchTask = batchTasks.get(i);
+                    final T object = uniqueObjects.get(i);
+                    tasks.add(batchTask.onSuccessTask(new Continuation<Void, Task<Void>>() {
+                        @Override
+                        public Task<Void> then(final Task<Void> batchTask) throws Exception {
+                            return object.handleDeleteResultAsync().continueWithTask(new Continuation<Void, Task<Void>>() {
+                                @Override
+                                public Task<Void> then(Task<Void> task) throws Exception {
+                                    return batchTask;
+                                }
+                            });
+                        }
+                    }));
+                }
+                return Task.whenAll(tasks);
+            }
+        });
+    }
+
+    /**
+     * Deletes each object in the provided list. This is faster than deleting each object individually
+     * because it batches the requests.
+     *
+     * @param objects The objects to delete.
+     * @throws ParseException Throws an exception if the server returns an error or is inaccessible.
+     */
+    public static <T extends ParseObject> void deleteAll(List<T> objects) throws ParseException {
+        ParseTaskUtils.wait(deleteAllInBackground(objects));
+    }
+
+    /**
+     * Deletes each object in the provided list. This is faster than deleting each object individually
+     * because it batches the requests.
+     *
+     * @param objects  The objects to delete.
+     * @param callback The callback method to execute when completed.
+     */
+    public static <T extends ParseObject> void deleteAllInBackground(List<T> objects, DeleteCallback callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(deleteAllInBackground(objects), callback);
+    }
+
+    /**
+     * Deletes each object in the provided list. This is faster than deleting each object individually
+     * because it batches the requests.
+     *
+     * @param objects The objects to delete.
+     * @return A {@link bolts.Task} that is resolved when deleteAll completes.
+     */
+    public static <T extends ParseObject> Task<Void> deleteAllInBackground(final List<T> objects) {
+        return ParseUser.getCurrentSessionTokenAsync().onSuccessTask(new Continuation<String, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<String> task) throws Exception {
+                String sessionToken = task.getResult();
+                return deleteAllAsync(objects, sessionToken);
+            }
+        });
+    }
+
+    /**
+     * Finds all of the objects that are reachable from child, including child itself, and adds them
+     * to the given mutable array. It traverses arrays and json objects.
+     *
+     * @param node           An kind object to search for children.
+     * @param dirtyChildren  The array to collect the {@code ParseObject}s into.
+     * @param dirtyFiles     The array to collect the {@link ParseFile}s into.
+     * @param alreadySeen    The set of all objects that have already been seen.
+     * @param alreadySeenNew The set of new objects that have already been seen since the last existing object.
+     */
+    private static void collectDirtyChildren(Object node,
+                                             final Collection<ParseObject> dirtyChildren,
+                                             final Collection<ParseFile> dirtyFiles,
+                                             final Set<ParseObject> alreadySeen,
+                                             final Set<ParseObject> alreadySeenNew) {
+
+        new ParseTraverser() {
+            @Override
+            protected boolean visit(Object node) {
+                // If it's a file, then add it to the list if it's dirty.
+                if (node instanceof ParseFile) {
+                    if (dirtyFiles == null) {
+                        return true;
+                    }
+
+                    ParseFile file = (ParseFile) node;
+                    if (file.getUrl() == null) {
+                        dirtyFiles.add(file);
+                    }
+                    return true;
+                }
+
+                // If it's anything other than a file, then just continue;
+                if (!(node instanceof ParseObject)) {
+                    return true;
+                }
+
+                if (dirtyChildren == null) {
+                    return true;
+                }
+
+                // For files, we need to handle recursion manually to find cycles of new objects.
+                ParseObject object = (ParseObject) node;
+                Set<ParseObject> seen = alreadySeen;
+                Set<ParseObject> seenNew = alreadySeenNew;
+
+                // Check for cycles of new objects. Any such cycle means it will be
+                // impossible to save this collection of objects, so throw an exception.
+                if (object.getObjectId() != null) {
+                    seenNew = new HashSet<>();
+                } else {
+                    if (seenNew.contains(object)) {
+                        throw new RuntimeException("Found a circular dependency while saving.");
+                    }
+                    seenNew = new HashSet<>(seenNew);
+                    seenNew.add(object);
+                }
+
+                // Check for cycles of any object. If this occurs, then there's no
+                // problem, but we shouldn't recurse any deeper, because it would be
+                // an infinite recursion.
+                if (seen.contains(object)) {
+                    return true;
+                }
+                seen = new HashSet<>(seen);
+                seen.add(object);
+
+                // Recurse into this object's children looking for dirty children.
+                // We only need to look at the child object's current estimated data,
+                // because that's the only data that might need to be saved now.
+                collectDirtyChildren(object.estimatedData, dirtyChildren, dirtyFiles, seen, seenNew);
+
+                if (object.isDirty(false)) {
+                    dirtyChildren.add(object);
+                }
+
+                return true;
+            }
+        }.setYieldRoot(true).traverse(node);
+    }
+
+    //endregion
+
+    /**
+     * Helper version of collectDirtyChildren so that callers don't have to add the internally used
+     * parameters.
+     */
+    private static void collectDirtyChildren(Object node, Collection<ParseObject> dirtyChildren,
+                                             Collection<ParseFile> dirtyFiles) {
+        collectDirtyChildren(node, dirtyChildren, dirtyFiles,
+                new HashSet<ParseObject>(),
+                new HashSet<ParseObject>());
+    }
+
+    /**
+     * This saves all of the objects and files reachable from the given object. It does its work in
+     * multiple waves, saving as many as possible in each wave. If there's ever an error, it just
+     * gives up, sets error, and returns NO.
+     */
+    private static Task<Void> deepSaveAsync(final Object object, final String sessionToken) {
+        Set<ParseObject> objects = new HashSet<>();
+        Set<ParseFile> files = new HashSet<>();
+        collectDirtyChildren(object, objects, files);
+
+        // This has to happen separately from everything else because ParseUser.save() is
+        // special-cased to work for lazy users, but new users can't be created by
+        // ParseMultiCommand's regular save.
+        Set<ParseUser> users = new HashSet<>();
+        for (ParseObject o : objects) {
+            if (o instanceof ParseUser) {
+                ParseUser user = (ParseUser) o;
+                if (user.isLazy()) {
+                    users.add((ParseUser) o);
+                }
+            }
+        }
+        objects.removeAll(users);
+
+        // objects will need to wait for files to be complete since they may be nested children.
+        final AtomicBoolean filesComplete = new AtomicBoolean(false);
+        List<Task<Void>> tasks = new ArrayList<>();
+        for (ParseFile file : files) {
+            tasks.add(file.saveAsync(sessionToken, null, null));
+        }
+        Task<Void> filesTask = Task.whenAll(tasks).continueWith(new Continuation<Void, Void>() {
+            @Override
+            public Void then(Task<Void> task) throws Exception {
+                filesComplete.set(true);
+                return null;
+            }
+        });
+
+        // objects will need to wait for users to be complete since they may be nested children.
+        final AtomicBoolean usersComplete = new AtomicBoolean(false);
+        tasks = new ArrayList<>();
+        for (final ParseUser user : users) {
+            tasks.add(user.saveAsync(sessionToken));
+        }
+        Task<Void> usersTask = Task.whenAll(tasks).continueWith(new Continuation<Void, Void>() {
+            @Override
+            public Void then(Task<Void> task) throws Exception {
+                usersComplete.set(true);
+                return null;
+            }
+        });
+
+        final Capture<Set<ParseObject>> remaining = new Capture<>(objects);
+        Task<Void> objectsTask = Task.forResult(null).continueWhile(new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                return remaining.get().size() > 0;
+            }
+        }, new Continuation<Void, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<Void> task) throws Exception {
+                // Partition the objects into two sets: those that can be save immediately,
+                // and those that rely on other objects to be created first.
+                final List<ParseObject> current = new ArrayList<>();
+                final Set<ParseObject> nextBatch = new HashSet<>();
+                for (ParseObject obj : remaining.get()) {
+                    if (obj.canBeSerialized()) {
+                        current.add(obj);
+                    } else {
+                        nextBatch.add(obj);
+                    }
+                }
+                remaining.set(nextBatch);
+
+                if (current.size() == 0 && filesComplete.get() && usersComplete.get()) {
+                    // We do cycle-detection when building the list of objects passed to this function, so
+                    // this should never get called. But we should check for it anyway, so that we get an
+                    // exception instead of an infinite loop.
+                    throw new RuntimeException("Unable to save a ParseObject with a relation to a cycle.");
+                }
+
+                // Package all save commands together
+                if (current.size() == 0) {
+                    return Task.forResult(null);
+                }
+
+                return enqueueForAll(current, new Continuation<Void, Task<Void>>() {
+                    @Override
+                    public Task<Void> then(Task<Void> toAwait) throws Exception {
+                        return saveAllAsync(current, sessionToken, toAwait);
+                    }
+                });
+            }
+        });
+
+        return Task.whenAll(Arrays.asList(filesTask, usersTask, objectsTask));
+    }
+
+    private static <T extends ParseObject> Task<Void> saveAllAsync(
+            final List<T> uniqueObjects, final String sessionToken, Task<Void> toAwait) {
+        return toAwait.continueWithTask(new Continuation<Void, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<Void> task) throws Exception {
+                int objectCount = uniqueObjects.size();
+                List<ParseObject.State> states = new ArrayList<>(objectCount);
+                List<ParseOperationSet> operationsList = new ArrayList<>(objectCount);
+                List<ParseDecoder> decoders = new ArrayList<>(objectCount);
+                for (int i = 0; i < objectCount; i++) {
+                    ParseObject object = uniqueObjects.get(i);
+                    object.updateBeforeSave();
+                    object.validateSave();
+
+                    states.add(object.getState());
+                    operationsList.add(object.startSave());
+                    final Map<String, ParseObject> fetchedObjects = object.collectFetchedObjects();
+                    decoders.add(new KnownParseObjectDecoder(fetchedObjects));
+                }
+                List<Task<ParseObject.State>> batchTasks = getObjectController().saveAllAsync(
+                        states, operationsList, sessionToken, decoders);
+
+                List<Task<Void>> tasks = new ArrayList<>(objectCount);
+                for (int i = 0; i < objectCount; i++) {
+                    Task<ParseObject.State> batchTask = batchTasks.get(i);
+                    final T object = uniqueObjects.get(i);
+                    final ParseOperationSet operations = operationsList.get(i);
+                    tasks.add(batchTask.continueWithTask(new Continuation<ParseObject.State, Task<Void>>() {
+                        @Override
+                        public Task<Void> then(final Task<ParseObject.State> batchTask) throws Exception {
+                            ParseObject.State result = batchTask.getResult(); // will be null on failure
+                            return object.handleSaveResultAsync(result, operations).continueWithTask(new Continuation<Void, Task<Void>>() {
+                                @Override
+                                public Task<Void> then(Task<Void> task) throws Exception {
+                                    if (task.isFaulted() || task.isCancelled()) {
+                                        return task;
+                                    }
+
+                                    // We still want to propagate batchTask errors
+                                    return batchTask.makeVoid();
+                                }
+                            });
+                        }
+                    }));
+                }
+                return Task.whenAll(tasks);
+            }
+        });
+    }
+
+    /**
+     * Saves each object in the provided list. This is faster than saving each object individually
+     * because it batches the requests.
+     *
+     * @param objects The objects to save.
+     * @throws ParseException Throws an exception if the server returns an error or is inaccessible.
+     */
+    public static <T extends ParseObject> void saveAll(List<T> objects) throws ParseException {
+        ParseTaskUtils.wait(saveAllInBackground(objects));
+    }
+
+    /**
+     * Saves each object in the provided list to the server in a background thread. This is preferable
+     * to using saveAll, unless your code is already running from a background thread.
+     *
+     * @param objects  The objects to save.
+     * @param callback {@code callback.done(e)} is called when the save completes.
+     */
+    public static <T extends ParseObject> void saveAllInBackground(List<T> objects, SaveCallback callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(saveAllInBackground(objects), callback);
+    }
+
+    /**
+     * Saves each object in the provided list to the server in a background thread. This is preferable
+     * to using saveAll, unless your code is already running from a background thread.
+     *
+     * @param objects The objects to save.
+     * @return A {@link bolts.Task} that is resolved when saveAll completes.
+     */
+    public static <T extends ParseObject> Task<Void> saveAllInBackground(final List<T> objects) {
+        return ParseUser.getCurrentUserAsync().onSuccessTask(new Continuation<ParseUser, Task<String>>() {
+            @Override
+            public Task<String> then(Task<ParseUser> task) throws Exception {
+                final ParseUser current = task.getResult();
+                if (current == null) {
+                    return Task.forResult(null);
+                }
+                if (!current.isLazy()) {
+                    return Task.forResult(current.getSessionToken());
+                }
+
+                // The current user is lazy/unresolved. If it is attached to any of the objects via ACL,
+                // we'll need to resolve/save it before proceeding.
+                for (ParseObject object : objects) {
+                    if (!object.isDataAvailable(KEY_ACL)) {
+                        continue;
+                    }
+                    final ParseACL acl = object.getACL(false);
+                    if (acl == null) {
+                        continue;
+                    }
+                    final ParseUser user = acl.getUnresolvedUser();
+                    if (user != null && user.isCurrentUser()) {
+                        // We only need to find one, since there's only one current user.
+                        return user.saveAsync(null).onSuccess(new Continuation<Void, String>() {
+                            @Override
+                            public String then(Task<Void> task) throws Exception {
+                                if (acl.hasUnresolvedUser()) {
+                                    throw new IllegalStateException("ACL has an unresolved ParseUser. "
+                                            + "Save or sign up before attempting to serialize the ACL.");
+                                }
+                                return user.getSessionToken();
+                            }
+                        });
+                    }
+                }
+
+                // There were no objects with ACLs pointing to unresolved users.
+                return Task.forResult(null);
+            }
+        }).onSuccessTask(new Continuation<String, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<String> task) throws Exception {
+                final String sessionToken = task.getResult();
+                return deepSaveAsync(objects, sessionToken);
+            }
+        });
+    }
+
+    /**
+     * Fetches all the objects that don't have data in the provided list in the background.
+     *
+     * @param objects The list of objects to fetch.
+     * @return A {@link bolts.Task} that is resolved when fetchAllIfNeeded completes.
+     */
+    public static <T extends ParseObject> Task<List<T>> fetchAllIfNeededInBackground(
+            final List<T> objects) {
+        return fetchAllAsync(objects, true);
+    }
+
+    /**
+     * Fetches all the objects that don't have data in the provided list.
+     *
+     * @param objects The list of objects to fetch.
+     * @return The list passed in for convenience.
+     * @throws ParseException Throws an exception if the server returns an error or is inaccessible.
+     */
+    public static <T extends ParseObject> List<T> fetchAllIfNeeded(List<T> objects)
+            throws ParseException {
+        return ParseTaskUtils.wait(fetchAllIfNeededInBackground(objects));
+    }
+
+    //region LDS-processing methods.
+
+    /**
+     * Fetches all the objects that don't have data in the provided list in the background.
+     *
+     * @param objects  The list of objects to fetch.
+     * @param callback {@code callback.done(result, e)} is called when the fetch completes.
+     */
+    public static <T extends ParseObject> void fetchAllIfNeededInBackground(final List<T> objects,
+                                                                            FindCallback<T> callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(fetchAllIfNeededInBackground(objects), callback);
+    }
+
+    private static <T extends ParseObject> Task<List<T>> fetchAllAsync(
+            final List<T> objects, final boolean onlyIfNeeded) {
+        return ParseUser.getCurrentUserAsync().onSuccessTask(new Continuation<ParseUser, Task<List<T>>>() {
+            @Override
+            public Task<List<T>> then(Task<ParseUser> task) throws Exception {
+                final ParseUser user = task.getResult();
+                return enqueueForAll(objects, new Continuation<Void, Task<List<T>>>() {
+                    @Override
+                    public Task<List<T>> then(Task<Void> task) throws Exception {
+                        return fetchAllAsync(objects, user, onlyIfNeeded, task);
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * @param onlyIfNeeded If enabled, will only fetch if the object has an objectId and
+     *                     !isDataAvailable, otherwise it requires objectIds and will fetch regardless
+     *                     of data availability.
+     */
+    // TODO(grantland): Convert to ParseUser.State
+    private static <T extends ParseObject> Task<List<T>> fetchAllAsync(
+            final List<T> objects, final ParseUser user, final boolean onlyIfNeeded, Task<Void> toAwait) {
+        if (objects.size() == 0) {
+            return Task.forResult(objects);
+        }
+
+        List<String> objectIds = new ArrayList<>();
+        String className = null;
+        for (T object : objects) {
+            if (onlyIfNeeded && object.isDataAvailable()) {
+                continue;
+            }
+
+            if (className != null && !object.getClassName().equals(className)) {
+                throw new IllegalArgumentException("All objects should have the same class");
+            }
+            className = object.getClassName();
+
+            String objectId = object.getObjectId();
+            if (objectId != null) {
+                objectIds.add(object.getObjectId());
+            } else if (!onlyIfNeeded) {
+                throw new IllegalArgumentException("All objects must exist on the server");
+            }
+        }
+
+        if (objectIds.size() == 0) {
+            return Task.forResult(objects);
+        }
+
+        final ParseQuery<T> query = ParseQuery.<T>getQuery(className)
+                .whereContainedIn(KEY_OBJECT_ID, objectIds);
+        return toAwait.continueWithTask(new Continuation<Void, Task<List<T>>>() {
+            @Override
+            public Task<List<T>> then(Task<Void> task) throws Exception {
+                return query.findAsync(query.getBuilder().build(), user, null);
+            }
+        }).onSuccess(new Continuation<List<T>, List<T>>() {
+            @Override
+            public List<T> then(Task<List<T>> task) throws Exception {
+                Map<String, T> resultMap = new HashMap<>();
+                for (T o : task.getResult()) {
+                    resultMap.put(o.getObjectId(), o);
+                }
+                for (T object : objects) {
+                    if (onlyIfNeeded && object.isDataAvailable()) {
+                        continue;
+                    }
+
+                    T newObject = resultMap.get(object.getObjectId());
+                    if (newObject == null) {
+                        throw new ParseException(
+                                ParseException.OBJECT_NOT_FOUND,
+                                "Object id " + object.getObjectId() + " does not exist");
+                    }
+                    if (!Parse.isLocalDatastoreEnabled()) {
+                        // We only need to merge if LDS is disabled, since single instance will do the merging
+                        // for us.
+                        object.mergeFromObject(newObject);
+                    }
+                }
+                return objects;
+            }
+        });
+    }
+
+    /**
+     * Fetches all the objects in the provided list in the background.
+     *
+     * @param objects The list of objects to fetch.
+     * @return A {@link bolts.Task} that is resolved when fetch completes.
+     */
+    public static <T extends ParseObject> Task<List<T>> fetchAllInBackground(final List<T> objects) {
+        return fetchAllAsync(objects, false);
+    }
+
+    /**
+     * Fetches all the objects in the provided list.
+     *
+     * @param objects The list of objects to fetch.
+     * @return The list passed in.
+     * @throws ParseException Throws an exception if the server returns an error or is inaccessible.
+     */
+    public static <T extends ParseObject> List<T> fetchAll(List<T> objects) throws ParseException {
+        return ParseTaskUtils.wait(fetchAllInBackground(objects));
+    }
+
+    //endregion
+
+    /**
+     * Fetches all the objects in the provided list in the background.
+     *
+     * @param objects  The list of objects to fetch.
+     * @param callback {@code callback.done(result, e)} is called when the fetch completes.
+     */
+    public static <T extends ParseObject> void fetchAllInBackground(List<T> objects,
+                                                                    FindCallback<T> callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(fetchAllInBackground(objects), callback);
+    }
+
+    /**
+     * Registers the Parse-provided {@code ParseObject} subclasses. Do this here in a real method rather than
+     * as part of a static initializer because doing this in a static initializer can lead to
+     * deadlocks: https://our.intern.facebook.com/intern/tasks/?t=3508472
+     */
+  /* package */
+    static void registerParseSubclasses() {
+        registerSubclass(ParseUser.class);
+        registerSubclass(ParseRole.class);
+        registerSubclass(ParseInstallation.class);
+        registerSubclass(ParseSession.class);
+
+        registerSubclass(ParsePin.class);
+        registerSubclass(EventuallyPin.class);
+    }
+
+    /* package */
+    static void unregisterParseSubclasses() {
+        unregisterSubclass(ParseUser.class);
+        unregisterSubclass(ParseRole.class);
+        unregisterSubclass(ParseInstallation.class);
+        unregisterSubclass(ParseSession.class);
+
+        unregisterSubclass(ParsePin.class);
+        unregisterSubclass(EventuallyPin.class);
+    }
+
+    /**
+     * Stores the objects and every object they point to in the local datastore, recursively. If
+     * those other objects have not been fetched from Parse, they will not be stored. However, if they
+     * have changed data, all of the changes will be retained. To get the objects back later, you can
+     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
+     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
+     *
+     * @param name     the name
+     * @param objects  the objects to be pinned
+     * @param callback the callback
+     * @see #unpinAllInBackground(String, java.util.List, DeleteCallback)
+     */
+    public static <T extends ParseObject> void pinAllInBackground(String name,
+                                                                  List<T> objects, SaveCallback callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(pinAllInBackground(name, objects), callback);
+    }
+
+    /**
+     * Stores the objects and every object they point to in the local datastore, recursively. If
+     * those other objects have not been fetched from Parse, they will not be stored. However, if they
+     * have changed data, all of the changes will be retained. To get the objects back later, you can
+     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
+     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
+     *
+     * @param name    the name
+     * @param objects the objects to be pinned
+     * @return A {@link bolts.Task} that is resolved when pinning all completes.
+     * @see #unpinAllInBackground(String, java.util.List)
+     */
+    public static <T extends ParseObject> Task<Void> pinAllInBackground(final String name,
+                                                                        final List<T> objects) {
+        return pinAllInBackground(name, objects, true);
+    }
+
+    private static <T extends ParseObject> Task<Void> pinAllInBackground(final String name,
+                                                                         final List<T> objects, final boolean includeAllChildren) {
+        if (!Parse.isLocalDatastoreEnabled()) {
+            throw new IllegalStateException("Method requires Local Datastore. " +
+                    "Please refer to `Parse#enableLocalDatastore(Context)`.");
+        }
+
+        Task<Void> task = Task.forResult(null);
+
+        // Resolve and persist unresolved users attached via ACL, similarly how we do in saveAsync
+        for (final ParseObject object : objects) {
+            task = task.onSuccessTask(new Continuation<Void, Task<Void>>() {
+                @Override
+                public Task<Void> then(Task<Void> task) throws Exception {
+                    if (!object.isDataAvailable(KEY_ACL)) {
+                        return Task.forResult(null);
+                    }
+
+                    final ParseACL acl = object.getACL(false);
+                    if (acl == null) {
+                        return Task.forResult(null);
+                    }
+
+                    ParseUser user = acl.getUnresolvedUser();
+                    if (user == null || !user.isCurrentUser()) {
+                        return Task.forResult(null);
+                    }
+
+                    return ParseUser.pinCurrentUserIfNeededAsync(user);
+                }
+            });
+        }
+
+        return task.onSuccessTask(new Continuation<Void, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<Void> task) throws Exception {
+                return Parse.getLocalDatastore().pinAllObjectsAsync(
+                        name != null ? name : DEFAULT_PIN,
+                        objects,
+                        includeAllChildren);
+            }
+        }).onSuccessTask(new Continuation<Void, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<Void> task) throws Exception {
+                // Hack to emulate persisting current user on disk after a save like in ParseUser#saveAsync
+                // Note: This does not persist current user if it's a child object of `objects`, it probably
+                // should, but we can't unless we do something similar to #deepSaveAsync.
+                if (ParseCorePlugins.PIN_CURRENT_USER.equals(name)) {
+                    return task;
+                }
+                for (ParseObject object : objects) {
+                    if (object instanceof ParseUser) {
+                        final ParseUser user = (ParseUser) object;
+                        if (user.isCurrentUser()) {
+                            return ParseUser.pinCurrentUserIfNeededAsync(user);
+                        }
+                    }
+                }
+                return task;
+            }
+        });
+    }
+
+    /**
+     * Stores the objects and every object they point to in the local datastore, recursively. If
+     * those other objects have not been fetched from Parse, they will not be stored. However, if they
+     * have changed data, all of the changes will be retained. To get the objects back later, you can
+     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
+     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
+     * {@link #fetchFromLocalDatastore()} on it.
+     *
+     * @param name    the name
+     * @param objects the objects to be pinned
+     * @throws ParseException
+     * @see #unpinAll(String, java.util.List)
+     */
+    public static <T extends ParseObject> void pinAll(String name,
+                                                      List<T> objects) throws ParseException {
+        ParseTaskUtils.wait(pinAllInBackground(name, objects));
+    }
+
+    /**
+     * Stores the objects and every object they point to in the local datastore, recursively. If
+     * those other objects have not been fetched from Parse, they will not be stored. However, if they
+     * have changed data, all of the changes will be retained. To get the objects back later, you can
+     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
+     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
+     *
+     * @param objects  the objects to be pinned
+     * @param callback the callback
+     * @see #unpinAllInBackground(java.util.List, DeleteCallback)
+     * @see #DEFAULT_PIN
+     */
+    public static <T extends ParseObject> void pinAllInBackground(List<T> objects,
+                                                                  SaveCallback callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(pinAllInBackground(DEFAULT_PIN, objects), callback);
+    }
+
+    /**
+     * Stores the objects and every object they point to in the local datastore, recursively. If
+     * those other objects have not been fetched from Parse, they will not be stored. However, if they
+     * have changed data, all of the changes will be retained. To get the objects back later, you can
+     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
+     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
+     *
+     * @param objects the objects to be pinned
+     * @return A {@link bolts.Task} that is resolved when pinning all completes.
+     * @see #unpinAllInBackground(java.util.List)
+     * @see #DEFAULT_PIN
+     */
+    public static <T extends ParseObject> Task<Void> pinAllInBackground(List<T> objects) {
+        return pinAllInBackground(DEFAULT_PIN, objects);
+    }
+
+    /**
+     * Stores the objects and every object they point to in the local datastore, recursively. If
+     * those other objects have not been fetched from Parse, they will not be stored. However, if they
+     * have changed data, all of the changes will be retained. To get the objects back later, you can
+     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
+     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
+     *
+     * @param objects the objects to be pinned
+     * @throws ParseException
+     * @see #unpinAll(java.util.List)
+     * @see #DEFAULT_PIN
+     */
+    public static <T extends ParseObject> void pinAll(List<T> objects) throws ParseException {
+        ParseTaskUtils.wait(pinAllInBackground(DEFAULT_PIN, objects));
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param name     the name
+     * @param objects  the objects
+     * @param callback the callback
+     * @see #pinAllInBackground(String, java.util.List, SaveCallback)
+     */
+    public static <T extends ParseObject> void unpinAllInBackground(String name, List<T> objects,
+                                                                    DeleteCallback callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(unpinAllInBackground(name, objects), callback);
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param name    the name
+     * @param objects the objects
+     * @return A {@link bolts.Task} that is resolved when unpinning all completes.
+     * @see #pinAllInBackground(String, java.util.List)
+     */
+    public static <T extends ParseObject> Task<Void> unpinAllInBackground(String name,
+                                                                          List<T> objects) {
+        if (!Parse.isLocalDatastoreEnabled()) {
+            throw new IllegalStateException("Method requires Local Datastore. " +
+                    "Please refer to `Parse#enableLocalDatastore(Context)`.");
+        }
+        if (name == null) {
+            name = DEFAULT_PIN;
+        }
+        return Parse.getLocalDatastore().unpinAllObjectsAsync(name, objects);
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param name    the name
+     * @param objects the objects
+     * @throws ParseException
+     * @see #pinAll(String, java.util.List)
+     */
+    public static <T extends ParseObject> void unpinAll(String name,
+                                                        List<T> objects) throws ParseException {
+        ParseTaskUtils.wait(unpinAllInBackground(name, objects));
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param objects  the objects
+     * @param callback the callback
+     * @see #pinAllInBackground(java.util.List, SaveCallback)
+     * @see #DEFAULT_PIN
+     */
+    public static <T extends ParseObject> void unpinAllInBackground(List<T> objects,
+                                                                    DeleteCallback callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(unpinAllInBackground(DEFAULT_PIN, objects), callback);
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param objects the objects
+     * @return A {@link bolts.Task} that is resolved when unpinning all completes.
+     * @see #pinAllInBackground(java.util.List)
+     * @see #DEFAULT_PIN
+     */
+    public static <T extends ParseObject> Task<Void> unpinAllInBackground(List<T> objects) {
+        return unpinAllInBackground(DEFAULT_PIN, objects);
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param objects the objects
+     * @throws ParseException
+     * @see #pinAll(java.util.List)
+     * @see #DEFAULT_PIN
+     */
+    public static <T extends ParseObject> void unpinAll(List<T> objects) throws ParseException {
+        ParseTaskUtils.wait(unpinAllInBackground(DEFAULT_PIN, objects));
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param name     the name
+     * @param callback the callback
+     * @see #pinAll(String, java.util.List)
+     */
+    public static void unpinAllInBackground(String name, DeleteCallback callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(unpinAllInBackground(name), callback);
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param name the name
+     * @return A {@link bolts.Task} that is resolved when unpinning all completes.
+     * @see #pinAll(String, java.util.List)
+     */
+    public static Task<Void> unpinAllInBackground(String name) {
+        if (!Parse.isLocalDatastoreEnabled()) {
+            throw new IllegalStateException("Method requires Local Datastore. " +
+                    "Please refer to `Parse#enableLocalDatastore(Context)`.");
+        }
+        if (name == null) {
+            name = DEFAULT_PIN;
+        }
+        return Parse.getLocalDatastore().unpinAllObjectsAsync(name);
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param name the name
+     * @throws ParseException
+     * @see #pinAll(String, java.util.List)
+     */
+    public static void unpinAll(String name) throws ParseException {
+        ParseTaskUtils.wait(unpinAllInBackground(name));
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @param callback the callback
+     * @see #pinAllInBackground(java.util.List, SaveCallback)
+     * @see #DEFAULT_PIN
+     */
+    public static void unpinAllInBackground(DeleteCallback callback) {
+        ParseTaskUtils.callbackOnMainThreadAsync(unpinAllInBackground(), callback);
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @return A {@link bolts.Task} that is resolved when unpinning all completes.
+     * @see #pinAllInBackground(java.util.List, SaveCallback)
+     * @see #DEFAULT_PIN
+     */
+    public static Task<Void> unpinAllInBackground() {
+        return unpinAllInBackground(DEFAULT_PIN);
+    }
+
+    /**
+     * Removes the objects and every object they point to in the local datastore, recursively.
+     *
+     * @throws ParseException
+     * @see #pinAll(java.util.List)
+     * @see #DEFAULT_PIN
+     */
+    public static void unpinAll() throws ParseException {
+        ParseTaskUtils.wait(unpinAllInBackground());
+    }
+
+    /* package */
+    static ParseObject createFromParcel(Parcel source, ParseParcelDecoder decoder) {
+        String className = source.readString();
+        String objectId = source.readByte() == 1 ? source.readString() : null;
+        // Create empty object (might be the same instance if LDS is enabled)
+        // and pass to decoder before unparceling child objects in State
+        ParseObject object = createWithoutData(className, objectId);
+        if (decoder instanceof ParseObjectParcelDecoder) {
+            ((ParseObjectParcelDecoder) decoder).addKnownObject(object);
+        }
+        State state = State.createFromParcel(source, decoder);
+        object.setState(state);
+        if (source.readByte() == 1) object.localId = source.readString();
+        if (source.readByte() == 1) object.isDeleted = true;
+        // If object.ldsEnabledWhenParceling is true, we got this from OfflineStore.
+        // There is no need to restore operations in that case.
+        boolean restoreOperations = !object.ldsEnabledWhenParceling;
+        ParseOperationSet set = ParseOperationSet.fromParcel(source, decoder);
+        if (restoreOperations) {
+            for (String key : set.keySet()) {
+                ParseFieldOperation op = set.get(key);
+                object.performOperation(key, op); // Update ops and estimatedData
+            }
+        }
+        Bundle bundle = source.readBundle(ParseObject.class.getClassLoader());
+        object.onRestoreInstanceState(bundle);
+        return object;
+    }
 
     /* package */ State.Init<?> newStateBuilder(String className) {
         return new State.Builder(className);
@@ -805,8 +1486,6 @@ public class ParseObject implements Parcelable {
                 ? new Date(createdAt)
                 : null;
     }
-
-    //endregion
 
     /**
      * Returns a set view of the keys contained in this object. This does not include createdAt,
@@ -915,7 +1594,7 @@ public class ParseObject implements Parcelable {
      * @param json    : JSON object to be converted to Parse object
      * @param decoder : Decoder to be used for Decoding JSON
      */
-  public void build(JSONObject json, ParseDecoder decoder) {
+    public void build(JSONObject json, ParseDecoder decoder) {
         try {
             State.Builder builder = new State.Builder(state)
                     .isComplete(true);
@@ -960,13 +1639,12 @@ public class ParseObject implements Parcelable {
         }
     }
 
-
-  /**
-   * Merges from JSON in REST format.
-   * Updates this object with data from the server.
-   *
-   * @see #toJSONObjectForSaving(State, ParseOperationSet, ParseEncoder)
-   */
+    /**
+     * Merges from JSON in REST format.
+     * Updates this object with data from the server.
+     *
+     * @see #toJSONObjectForSaving(State, ParseOperationSet, ParseEncoder)
+     */
   /* package */ State mergeFromServer(
             State state, JSONObject json, ParseDecoder decoder, boolean completeData) {
         try {
@@ -984,66 +1662,65 @@ public class ParseObject implements Parcelable {
         __type:       Returned by queries and cloud functions to designate body is a ParseObject
         __className:  Used by fromJSON, should be stripped out by the time it gets here...
          */
-        if (key.equals("__type") || key.equals(KEY_CLASS_NAME)) {
-          continue;
-        }
-        if (key.equals(KEY_OBJECT_ID)) {
-          String newObjectId = json.getString(key);
-          builder.objectId(newObjectId);
-          continue;
-        }
-        if (key.equals(KEY_CREATED_AT)) {
-          builder.createdAt(ParseDateFormat.getInstance().parse(json.getString(key)));
-          continue;
-        }
-        if (key.equals(KEY_UPDATED_AT)) {
-          builder.updatedAt(ParseDateFormat.getInstance().parse(json.getString(key)));
-          continue;
-        }
-        if (key.equals(KEY_ACL)) {
-          ParseACL acl = ParseACL.createACLFromJSONObject(json.getJSONObject(key), decoder);
-          builder.put(KEY_ACL, acl);
-          continue;
-        }
-        if (key.equals(KEY_SELECTED_KEYS)) {
-          JSONArray safeKeys = json.getJSONArray(key);
-          if (safeKeys.length() > 0) {
-            Collection<String> set = new HashSet<>();
-            for (int i = 0; i < safeKeys.length(); i++) {
-              // Don't add nested keys.
-              String safeKey = safeKeys.getString(i);
-              if (safeKey.contains(".")) safeKey = safeKey.split("\\.")[0];
-              set.add(safeKey);
-            }
-            builder.availableKeys(set);
-          }
-          continue;
-        }
+                if (key.equals("__type") || key.equals(KEY_CLASS_NAME)) {
+                    continue;
+                }
+                if (key.equals(KEY_OBJECT_ID)) {
+                    String newObjectId = json.getString(key);
+                    builder.objectId(newObjectId);
+                    continue;
+                }
+                if (key.equals(KEY_CREATED_AT)) {
+                    builder.createdAt(ParseDateFormat.getInstance().parse(json.getString(key)));
+                    continue;
+                }
+                if (key.equals(KEY_UPDATED_AT)) {
+                    builder.updatedAt(ParseDateFormat.getInstance().parse(json.getString(key)));
+                    continue;
+                }
+                if (key.equals(KEY_ACL)) {
+                    ParseACL acl = ParseACL.createACLFromJSONObject(json.getJSONObject(key), decoder);
+                    builder.put(KEY_ACL, acl);
+                    continue;
+                }
+                if (key.equals(KEY_SELECTED_KEYS)) {
+                    JSONArray safeKeys = json.getJSONArray(key);
+                    if (safeKeys.length() > 0) {
+                        Collection<String> set = new HashSet<>();
+                        for (int i = 0; i < safeKeys.length(); i++) {
+                            // Don't add nested keys.
+                            String safeKey = safeKeys.getString(i);
+                            if (safeKey.contains(".")) safeKey = safeKey.split("\\.")[0];
+                            set.add(safeKey);
+                        }
+                        builder.availableKeys(set);
+                    }
+                    continue;
+                }
 
-        Object value = json.get(key);
-        if (value instanceof JSONObject && json.has(KEY_SELECTED_KEYS)) {
-          // This might be a ParseObject. Pass selected keys to understand if it is complete.
-          JSONArray selectedKeys = json.getJSONArray(KEY_SELECTED_KEYS);
-          JSONArray nestedKeys = new JSONArray();
-          for (int i = 0; i < selectedKeys.length(); i++) {
-            String nestedKey = selectedKeys.getString(i);
-            if (nestedKey.startsWith(key + ".")) nestedKeys.put(nestedKey.substring(key.length() + 1));
-          }
-          if (nestedKeys.length() > 0) {
-            ((JSONObject) value).put(KEY_SELECTED_KEYS, nestedKeys);
-          }
-        }
-        Object decodedObject = decoder.decode(value);
-        builder.put(key, decodedObject);
-      }
+                Object value = json.get(key);
+                if (value instanceof JSONObject && json.has(KEY_SELECTED_KEYS)) {
+                    // This might be a ParseObject. Pass selected keys to understand if it is complete.
+                    JSONArray selectedKeys = json.getJSONArray(KEY_SELECTED_KEYS);
+                    JSONArray nestedKeys = new JSONArray();
+                    for (int i = 0; i < selectedKeys.length(); i++) {
+                        String nestedKey = selectedKeys.getString(i);
+                        if (nestedKey.startsWith(key + "."))
+                            nestedKeys.put(nestedKey.substring(key.length() + 1));
+                    }
+                    if (nestedKeys.length() > 0) {
+                        ((JSONObject) value).put(KEY_SELECTED_KEYS, nestedKeys);
+                    }
+                }
+                Object decodedObject = decoder.decode(value);
+                builder.put(key, decodedObject);
+            }
 
             return builder.build();
         } catch (JSONException e) {
             throw new RuntimeException(e);
         }
     }
-
-    //region LDS-processing methods.
 
     /**
      * Convert to REST JSON for persisting in LDS.
@@ -1069,7 +1746,6 @@ public class ParseObject implements Parcelable {
         }
         return toRest(state, operationSetQueueCopy, encoder);
     }
-
 
     public JSONObject toRestFromEstimatedData(ParseEncoder encoder) {
         State state;
@@ -1107,8 +1783,8 @@ public class ParseObject implements Parcelable {
                         ParseDateFormat.getInstance().format(new Date(state.createdAt())));
             }
             //if (state.updatedAt() > 0) {
-                json.put(KEY_UPDATED_AT,
-                        ParseDateFormat.getInstance().format(new Date()));
+            json.put(KEY_UPDATED_AT,
+                    ParseDateFormat.getInstance().format(new Date()));
             //}
             for (String key : estimatedData.keySet()) {
                 Object value = estimatedData.get(key);
@@ -1159,13 +1835,13 @@ public class ParseObject implements Parcelable {
                 json.put(key, objectEncoder.encode(value));
             }
 
-        // Internal JSON
-        //TODO(klimt): We'll need to rip all this stuff out and put it somewhere else if we start
-        // using the REST api and want to send data to Parse.
-        json.put(KEY_COMPLETE, state.isComplete());
-        json.put(KEY_IS_DELETING_EVENTUALLY, isDeletingEventually);
-        JSONArray availableKeys = new JSONArray(state.availableKeys());
-        json.put(KEY_SELECTED_KEYS, availableKeys);
+            // Internal JSON
+            //TODO(klimt): We'll need to rip all this stuff out and put it somewhere else if we start
+            // using the REST api and want to send data to Parse.
+            json.put(KEY_COMPLETE, state.isComplete());
+            json.put(KEY_IS_DELETING_EVENTUALLY, isDeletingEventually);
+            JSONArray availableKeys = new JSONArray(state.availableKeys());
+            json.put(KEY_SELECTED_KEYS, availableKeys);
 
             // Operation Set Queue
             JSONArray operations = new JSONArray();
@@ -1262,8 +1938,6 @@ public class ParseObject implements Parcelable {
             enqueueSaveEventuallyOperationAsync(operationSet);
         }
     }
-
-    //endregion
 
     private boolean hasDirtyChildren() {
         synchronized (mutex) {
@@ -1472,8 +2146,8 @@ public class ParseObject implements Parcelable {
      * Should be called on success or failure.
      */
   /* package */ Task<Void> handleSaveResultAsync(
-      final ParseObject.State result, final ParseOperationSet operationsBeforeSave) {
-    Task<Void> task = Task.forResult(null);
+            final ParseObject.State result, final ParseOperationSet operationsBeforeSave) {
+        Task<Void> task = Task.forResult(null);
 
         final boolean success = result != null;
         synchronized (mutex) {
@@ -1981,7 +2655,7 @@ public class ParseObject implements Parcelable {
      * Should only be called on success.
      */
   /* package */ Task<Void> handleFetchResultAsync(final ParseObject.State result) {
-    Task<Void> task = Task.forResult(null);
+        Task<Void> task = Task.forResult(null);
 
     /*
      * If this object is in the offline store, then we need to make sure that we pull in any dirty
@@ -2201,28 +2875,28 @@ public class ParseObject implements Parcelable {
     private Task<Void> deleteAsync(final String sessionToken, Task<Void> toAwait) {
         validateDelete();
 
-    return toAwait.onSuccessTask(new Continuation<Void, Task<Void>>() {
-      @Override
-      public Task<Void> then(Task<Void> task) throws Exception {
-        isDeleting = true;
-        if (state.objectId() == null) {
-          return task.cast(); // no reason to call delete since it doesn't exist
-        }
-        return deleteAsync(sessionToken);
-      }
-    }).onSuccessTask(new Continuation<Void, Task<Void>>() {
-      @Override
-      public Task<Void> then(Task<Void> task) throws Exception {
-        return handleDeleteResultAsync();
-      }
-    }).continueWith(new Continuation<Void, Void>() {
-      @Override
-      public Void then(Task<Void> task) throws Exception {
-        isDeleting = false;
-        return null;
-      }
-    });
-  }
+        return toAwait.onSuccessTask(new Continuation<Void, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<Void> task) throws Exception {
+                isDeleting = true;
+                if (state.objectId() == null) {
+                    return task.cast(); // no reason to call delete since it doesn't exist
+                }
+                return deleteAsync(sessionToken);
+            }
+        }).onSuccessTask(new Continuation<Void, Task<Void>>() {
+            @Override
+            public Task<Void> then(Task<Void> task) throws Exception {
+                return handleDeleteResultAsync();
+            }
+        }).continueWith(new Continuation<Void, Void>() {
+            @Override
+            public Void then(Task<Void> task) throws Exception {
+                isDeleting = false;
+                return null;
+            }
+        });
+    }
 
     //TODO (grantland): I'm not sure we want direct access to this. All access to `delete` should
     // enqueue on the taskQueue...
@@ -2303,201 +2977,6 @@ public class ParseObject implements Parcelable {
     }
 
     /**
-     * This deletes all of the objects from the given List.
-     */
-    private static <T extends ParseObject> Task<Void> deleteAllAsync(
-            final List<T> objects, final String sessionToken) {
-        if (objects.size() == 0) {
-            return Task.forResult(null);
-        }
-
-        // Create a list of unique objects based on objectIds
-        int objectCount = objects.size();
-        final List<ParseObject> uniqueObjects = new ArrayList<>(objectCount);
-        final HashSet<String> idSet = new HashSet<>();
-        for (int i = 0; i < objectCount; i++) {
-            ParseObject obj = objects.get(i);
-            if (!idSet.contains(obj.getObjectId())) {
-                idSet.add(obj.getObjectId());
-                uniqueObjects.add(obj);
-            }
-        }
-
-        return enqueueForAll(uniqueObjects, new Continuation<Void, Task<Void>>() {
-            @Override
-            public Task<Void> then(Task<Void> toAwait) throws Exception {
-                return deleteAllAsync(uniqueObjects, sessionToken, toAwait);
-            }
-        });
-    }
-
-    private static <T extends ParseObject> Task<Void> deleteAllAsync(
-            final List<T> uniqueObjects, final String sessionToken, Task<Void> toAwait) {
-        return toAwait.continueWithTask(new Continuation<Void, Task<Void>>() {
-            @Override
-            public Task<Void> then(Task<Void> task) throws Exception {
-                int objectCount = uniqueObjects.size();
-                List<ParseObject.State> states = new ArrayList<>(objectCount);
-                for (int i = 0; i < objectCount; i++) {
-                    ParseObject object = uniqueObjects.get(i);
-                    object.validateDelete();
-                    states.add(object.getState());
-                }
-                List<Task<Void>> batchTasks = getObjectController().deleteAllAsync(states, sessionToken);
-
-                List<Task<Void>> tasks = new ArrayList<>(objectCount);
-                for (int i = 0; i < objectCount; i++) {
-                    Task<Void> batchTask = batchTasks.get(i);
-                    final T object = uniqueObjects.get(i);
-                    tasks.add(batchTask.onSuccessTask(new Continuation<Void, Task<Void>>() {
-                        @Override
-                        public Task<Void> then(final Task<Void> batchTask) throws Exception {
-                            return object.handleDeleteResultAsync().continueWithTask(new Continuation<Void, Task<Void>>() {
-                                @Override
-                                public Task<Void> then(Task<Void> task) throws Exception {
-                                    return batchTask;
-                                }
-                            });
-                        }
-                    }));
-                }
-                return Task.whenAll(tasks);
-            }
-        });
-    }
-
-    /**
-     * Deletes each object in the provided list. This is faster than deleting each object individually
-     * because it batches the requests.
-     *
-     * @param objects The objects to delete.
-     * @throws ParseException Throws an exception if the server returns an error or is inaccessible.
-     */
-    public static <T extends ParseObject> void deleteAll(List<T> objects) throws ParseException {
-        ParseTaskUtils.wait(deleteAllInBackground(objects));
-    }
-
-    /**
-     * Deletes each object in the provided list. This is faster than deleting each object individually
-     * because it batches the requests.
-     *
-     * @param objects  The objects to delete.
-     * @param callback The callback method to execute when completed.
-     */
-    public static <T extends ParseObject> void deleteAllInBackground(List<T> objects, DeleteCallback callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(deleteAllInBackground(objects), callback);
-    }
-
-    /**
-     * Deletes each object in the provided list. This is faster than deleting each object individually
-     * because it batches the requests.
-     *
-     * @param objects The objects to delete.
-     * @return A {@link bolts.Task} that is resolved when deleteAll completes.
-     */
-    public static <T extends ParseObject> Task<Void> deleteAllInBackground(final List<T> objects) {
-        return ParseUser.getCurrentSessionTokenAsync().onSuccessTask(new Continuation<String, Task<Void>>() {
-            @Override
-            public Task<Void> then(Task<String> task) throws Exception {
-                String sessionToken = task.getResult();
-                return deleteAllAsync(objects, sessionToken);
-            }
-        });
-    }
-
-    /**
-     * Finds all of the objects that are reachable from child, including child itself, and adds them
-     * to the given mutable array. It traverses arrays and json objects.
-     *
-     * @param node           An kind object to search for children.
-     * @param dirtyChildren  The array to collect the {@code ParseObject}s into.
-     * @param dirtyFiles     The array to collect the {@link ParseFile}s into.
-     * @param alreadySeen    The set of all objects that have already been seen.
-     * @param alreadySeenNew The set of new objects that have already been seen since the last existing object.
-     */
-    private static void collectDirtyChildren(Object node,
-                                             final Collection<ParseObject> dirtyChildren,
-                                             final Collection<ParseFile> dirtyFiles,
-                                             final Set<ParseObject> alreadySeen,
-                                             final Set<ParseObject> alreadySeenNew) {
-
-        new ParseTraverser() {
-            @Override
-            protected boolean visit(Object node) {
-                // If it's a file, then add it to the list if it's dirty.
-                if (node instanceof ParseFile) {
-                    if (dirtyFiles == null) {
-                        return true;
-                    }
-
-                    ParseFile file = (ParseFile) node;
-                    if (file.getUrl() == null) {
-                        dirtyFiles.add(file);
-                    }
-                    return true;
-                }
-
-                // If it's anything other than a file, then just continue;
-                if (!(node instanceof ParseObject)) {
-                    return true;
-                }
-
-                if (dirtyChildren == null) {
-                    return true;
-                }
-
-                // For files, we need to handle recursion manually to find cycles of new objects.
-                ParseObject object = (ParseObject) node;
-                Set<ParseObject> seen = alreadySeen;
-                Set<ParseObject> seenNew = alreadySeenNew;
-
-                // Check for cycles of new objects. Any such cycle means it will be
-                // impossible to save this collection of objects, so throw an exception.
-                if (object.getObjectId() != null) {
-                    seenNew = new HashSet<>();
-                } else {
-                    if (seenNew.contains(object)) {
-                        throw new RuntimeException("Found a circular dependency while saving.");
-                    }
-                    seenNew = new HashSet<>(seenNew);
-                    seenNew.add(object);
-                }
-
-                // Check for cycles of any object. If this occurs, then there's no
-                // problem, but we shouldn't recurse any deeper, because it would be
-                // an infinite recursion.
-                if (seen.contains(object)) {
-                    return true;
-                }
-                seen = new HashSet<>(seen);
-                seen.add(object);
-
-                // Recurse into this object's children looking for dirty children.
-                // We only need to look at the child object's current estimated data,
-                // because that's the only data that might need to be saved now.
-                collectDirtyChildren(object.estimatedData, dirtyChildren, dirtyFiles, seen, seenNew);
-
-                if (object.isDirty(false)) {
-                    dirtyChildren.add(object);
-                }
-
-                return true;
-            }
-        }.setYieldRoot(true).traverse(node);
-    }
-
-    /**
-     * Helper version of collectDirtyChildren so that callers don't have to add the internally used
-     * parameters.
-     */
-    private static void collectDirtyChildren(Object node, Collection<ParseObject> dirtyChildren,
-                                             Collection<ParseFile> dirtyFiles) {
-        collectDirtyChildren(node, dirtyChildren, dirtyFiles,
-                new HashSet<ParseObject>(),
-                new HashSet<ParseObject>());
-    }
-
-    /**
      * Returns {@code true} if this object can be serialized for saving.
      */
     private boolean canBeSerialized() {
@@ -2532,387 +3011,6 @@ public class ParseObject implements Parcelable {
 
             return result.get();
         }
-    }
-
-    /**
-     * This saves all of the objects and files reachable from the given object. It does its work in
-     * multiple waves, saving as many as possible in each wave. If there's ever an error, it just
-     * gives up, sets error, and returns NO.
-     */
-    private static Task<Void> deepSaveAsync(final Object object, final String sessionToken) {
-        Set<ParseObject> objects = new HashSet<>();
-        Set<ParseFile> files = new HashSet<>();
-        collectDirtyChildren(object, objects, files);
-
-        // This has to happen separately from everything else because ParseUser.save() is
-        // special-cased to work for lazy users, but new users can't be created by
-        // ParseMultiCommand's regular save.
-        Set<ParseUser> users = new HashSet<>();
-        for (ParseObject o : objects) {
-            if (o instanceof ParseUser) {
-                ParseUser user = (ParseUser) o;
-                if (user.isLazy()) {
-                    users.add((ParseUser) o);
-                }
-            }
-        }
-        objects.removeAll(users);
-
-        // objects will need to wait for files to be complete since they may be nested children.
-        final AtomicBoolean filesComplete = new AtomicBoolean(false);
-        List<Task<Void>> tasks = new ArrayList<>();
-        for (ParseFile file : files) {
-            tasks.add(file.saveAsync(sessionToken, null, null));
-        }
-        Task<Void> filesTask = Task.whenAll(tasks).continueWith(new Continuation<Void, Void>() {
-            @Override
-            public Void then(Task<Void> task) throws Exception {
-                filesComplete.set(true);
-                return null;
-            }
-        });
-
-        // objects will need to wait for users to be complete since they may be nested children.
-        final AtomicBoolean usersComplete = new AtomicBoolean(false);
-        tasks = new ArrayList<>();
-        for (final ParseUser user : users) {
-            tasks.add(user.saveAsync(sessionToken));
-        }
-        Task<Void> usersTask = Task.whenAll(tasks).continueWith(new Continuation<Void, Void>() {
-            @Override
-            public Void then(Task<Void> task) throws Exception {
-                usersComplete.set(true);
-                return null;
-            }
-        });
-
-        final Capture<Set<ParseObject>> remaining = new Capture<>(objects);
-        Task<Void> objectsTask = Task.forResult(null).continueWhile(new Callable<Boolean>() {
-            @Override
-            public Boolean call() throws Exception {
-                return remaining.get().size() > 0;
-            }
-        }, new Continuation<Void, Task<Void>>() {
-            @Override
-            public Task<Void> then(Task<Void> task) throws Exception {
-                // Partition the objects into two sets: those that can be save immediately,
-                // and those that rely on other objects to be created first.
-                final List<ParseObject> current = new ArrayList<>();
-                final Set<ParseObject> nextBatch = new HashSet<>();
-                for (ParseObject obj : remaining.get()) {
-                    if (obj.canBeSerialized()) {
-                        current.add(obj);
-                    } else {
-                        nextBatch.add(obj);
-                    }
-                }
-                remaining.set(nextBatch);
-
-                if (current.size() == 0 && filesComplete.get() && usersComplete.get()) {
-                    // We do cycle-detection when building the list of objects passed to this function, so
-                    // this should never get called. But we should check for it anyway, so that we get an
-                    // exception instead of an infinite loop.
-                    throw new RuntimeException("Unable to save a ParseObject with a relation to a cycle.");
-                }
-
-                // Package all save commands together
-                if (current.size() == 0) {
-                    return Task.forResult(null);
-                }
-
-                return enqueueForAll(current, new Continuation<Void, Task<Void>>() {
-                    @Override
-                    public Task<Void> then(Task<Void> toAwait) throws Exception {
-                        return saveAllAsync(current, sessionToken, toAwait);
-                    }
-                });
-            }
-        });
-
-        return Task.whenAll(Arrays.asList(filesTask, usersTask, objectsTask));
-    }
-
-    private static <T extends ParseObject> Task<Void> saveAllAsync(
-            final List<T> uniqueObjects, final String sessionToken, Task<Void> toAwait) {
-        return toAwait.continueWithTask(new Continuation<Void, Task<Void>>() {
-            @Override
-            public Task<Void> then(Task<Void> task) throws Exception {
-                int objectCount = uniqueObjects.size();
-                List<ParseObject.State> states = new ArrayList<>(objectCount);
-                List<ParseOperationSet> operationsList = new ArrayList<>(objectCount);
-                List<ParseDecoder> decoders = new ArrayList<>(objectCount);
-                for (int i = 0; i < objectCount; i++) {
-                    ParseObject object = uniqueObjects.get(i);
-                    object.updateBeforeSave();
-                    object.validateSave();
-
-                    states.add(object.getState());
-                    operationsList.add(object.startSave());
-                    final Map<String, ParseObject> fetchedObjects = object.collectFetchedObjects();
-                    decoders.add(new KnownParseObjectDecoder(fetchedObjects));
-                }
-                List<Task<ParseObject.State>> batchTasks = getObjectController().saveAllAsync(
-                        states, operationsList, sessionToken, decoders);
-
-                List<Task<Void>> tasks = new ArrayList<>(objectCount);
-                for (int i = 0; i < objectCount; i++) {
-                    Task<ParseObject.State> batchTask = batchTasks.get(i);
-                    final T object = uniqueObjects.get(i);
-                    final ParseOperationSet operations = operationsList.get(i);
-                    tasks.add(batchTask.continueWithTask(new Continuation<ParseObject.State, Task<Void>>() {
-                        @Override
-                        public Task<Void> then(final Task<ParseObject.State> batchTask) throws Exception {
-                            ParseObject.State result = batchTask.getResult(); // will be null on failure
-                            return object.handleSaveResultAsync(result, operations).continueWithTask(new Continuation<Void, Task<Void>>() {
-                                @Override
-                                public Task<Void> then(Task<Void> task) throws Exception {
-                                    if (task.isFaulted() || task.isCancelled()) {
-                                        return task;
-                                    }
-
-                                    // We still want to propagate batchTask errors
-                                    return batchTask.makeVoid();
-                                }
-                            });
-                        }
-                    }));
-                }
-                return Task.whenAll(tasks);
-            }
-        });
-    }
-
-    /**
-     * Saves each object in the provided list. This is faster than saving each object individually
-     * because it batches the requests.
-     *
-     * @param objects The objects to save.
-     * @throws ParseException Throws an exception if the server returns an error or is inaccessible.
-     */
-    public static <T extends ParseObject> void saveAll(List<T> objects) throws ParseException {
-        ParseTaskUtils.wait(saveAllInBackground(objects));
-    }
-
-    /**
-     * Saves each object in the provided list to the server in a background thread. This is preferable
-     * to using saveAll, unless your code is already running from a background thread.
-     *
-     * @param objects  The objects to save.
-     * @param callback {@code callback.done(e)} is called when the save completes.
-     */
-    public static <T extends ParseObject> void saveAllInBackground(List<T> objects, SaveCallback callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(saveAllInBackground(objects), callback);
-    }
-
-    /**
-     * Saves each object in the provided list to the server in a background thread. This is preferable
-     * to using saveAll, unless your code is already running from a background thread.
-     *
-     * @param objects The objects to save.
-     * @return A {@link bolts.Task} that is resolved when saveAll completes.
-     */
-    public static <T extends ParseObject> Task<Void> saveAllInBackground(final List<T> objects) {
-        return ParseUser.getCurrentUserAsync().onSuccessTask(new Continuation<ParseUser, Task<String>>() {
-            @Override
-            public Task<String> then(Task<ParseUser> task) throws Exception {
-                final ParseUser current = task.getResult();
-                if (current == null) {
-                    return Task.forResult(null);
-                }
-                if (!current.isLazy()) {
-                    return Task.forResult(current.getSessionToken());
-                }
-
-                // The current user is lazy/unresolved. If it is attached to any of the objects via ACL,
-                // we'll need to resolve/save it before proceeding.
-                for (ParseObject object : objects) {
-                    if (!object.isDataAvailable(KEY_ACL)) {
-                        continue;
-                    }
-                    final ParseACL acl = object.getACL(false);
-                    if (acl == null) {
-                        continue;
-                    }
-                    final ParseUser user = acl.getUnresolvedUser();
-                    if (user != null && user.isCurrentUser()) {
-                        // We only need to find one, since there's only one current user.
-                        return user.saveAsync(null).onSuccess(new Continuation<Void, String>() {
-                            @Override
-                            public String then(Task<Void> task) throws Exception {
-                                if (acl.hasUnresolvedUser()) {
-                                    throw new IllegalStateException("ACL has an unresolved ParseUser. "
-                                            + "Save or sign up before attempting to serialize the ACL.");
-                                }
-                                return user.getSessionToken();
-                            }
-                        });
-                    }
-                }
-
-                // There were no objects with ACLs pointing to unresolved users.
-                return Task.forResult(null);
-            }
-        }).onSuccessTask(new Continuation<String, Task<Void>>() {
-            @Override
-            public Task<Void> then(Task<String> task) throws Exception {
-                final String sessionToken = task.getResult();
-                return deepSaveAsync(objects, sessionToken);
-            }
-        });
-    }
-
-    /**
-     * Fetches all the objects that don't have data in the provided list in the background.
-     *
-     * @param objects The list of objects to fetch.
-     * @return A {@link bolts.Task} that is resolved when fetchAllIfNeeded completes.
-     */
-    public static <T extends ParseObject> Task<List<T>> fetchAllIfNeededInBackground(
-            final List<T> objects) {
-        return fetchAllAsync(objects, true);
-    }
-
-    /**
-     * Fetches all the objects that don't have data in the provided list.
-     *
-     * @param objects The list of objects to fetch.
-     * @return The list passed in for convenience.
-     * @throws ParseException Throws an exception if the server returns an error or is inaccessible.
-     */
-    public static <T extends ParseObject> List<T> fetchAllIfNeeded(List<T> objects)
-            throws ParseException {
-        return ParseTaskUtils.wait(fetchAllIfNeededInBackground(objects));
-    }
-
-    /**
-     * Fetches all the objects that don't have data in the provided list in the background.
-     *
-     * @param objects  The list of objects to fetch.
-     * @param callback {@code callback.done(result, e)} is called when the fetch completes.
-     */
-    public static <T extends ParseObject> void fetchAllIfNeededInBackground(final List<T> objects,
-                                                                            FindCallback<T> callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(fetchAllIfNeededInBackground(objects), callback);
-    }
-
-    private static <T extends ParseObject> Task<List<T>> fetchAllAsync(
-            final List<T> objects, final boolean onlyIfNeeded) {
-        return ParseUser.getCurrentUserAsync().onSuccessTask(new Continuation<ParseUser, Task<List<T>>>() {
-            @Override
-            public Task<List<T>> then(Task<ParseUser> task) throws Exception {
-                final ParseUser user = task.getResult();
-                return enqueueForAll(objects, new Continuation<Void, Task<List<T>>>() {
-                    @Override
-                    public Task<List<T>> then(Task<Void> task) throws Exception {
-                        return fetchAllAsync(objects, user, onlyIfNeeded, task);
-                    }
-                });
-            }
-        });
-    }
-
-    /**
-     * @param onlyIfNeeded If enabled, will only fetch if the object has an objectId and
-     *                     !isDataAvailable, otherwise it requires objectIds and will fetch regardless
-     *                     of data availability.
-     */
-    // TODO(grantland): Convert to ParseUser.State
-    private static <T extends ParseObject> Task<List<T>> fetchAllAsync(
-            final List<T> objects, final ParseUser user, final boolean onlyIfNeeded, Task<Void> toAwait) {
-        if (objects.size() == 0) {
-            return Task.forResult(objects);
-        }
-
-        List<String> objectIds = new ArrayList<>();
-        String className = null;
-        for (T object : objects) {
-            if (onlyIfNeeded && object.isDataAvailable()) {
-                continue;
-            }
-
-            if (className != null && !object.getClassName().equals(className)) {
-                throw new IllegalArgumentException("All objects should have the same class");
-            }
-            className = object.getClassName();
-
-            String objectId = object.getObjectId();
-            if (objectId != null) {
-                objectIds.add(object.getObjectId());
-            } else if (!onlyIfNeeded) {
-                throw new IllegalArgumentException("All objects must exist on the server");
-            }
-        }
-
-        if (objectIds.size() == 0) {
-            return Task.forResult(objects);
-        }
-
-        final ParseQuery<T> query = ParseQuery.<T>getQuery(className)
-                .whereContainedIn(KEY_OBJECT_ID, objectIds);
-        return toAwait.continueWithTask(new Continuation<Void, Task<List<T>>>() {
-            @Override
-            public Task<List<T>> then(Task<Void> task) throws Exception {
-                return query.findAsync(query.getBuilder().build(), user, null);
-            }
-        }).onSuccess(new Continuation<List<T>, List<T>>() {
-            @Override
-            public List<T> then(Task<List<T>> task) throws Exception {
-                Map<String, T> resultMap = new HashMap<>();
-                for (T o : task.getResult()) {
-                    resultMap.put(o.getObjectId(), o);
-                }
-                for (T object : objects) {
-                    if (onlyIfNeeded && object.isDataAvailable()) {
-                        continue;
-                    }
-
-                    T newObject = resultMap.get(object.getObjectId());
-                    if (newObject == null) {
-                        throw new ParseException(
-                                ParseException.OBJECT_NOT_FOUND,
-                                "Object id " + object.getObjectId() + " does not exist");
-                    }
-                    if (!Parse.isLocalDatastoreEnabled()) {
-                        // We only need to merge if LDS is disabled, since single instance will do the merging
-                        // for us.
-                        object.mergeFromObject(newObject);
-                    }
-                }
-                return objects;
-            }
-        });
-    }
-
-    /**
-     * Fetches all the objects in the provided list in the background.
-     *
-     * @param objects The list of objects to fetch.
-     * @return A {@link bolts.Task} that is resolved when fetch completes.
-     */
-    public static <T extends ParseObject> Task<List<T>> fetchAllInBackground(final List<T> objects) {
-        return fetchAllAsync(objects, false);
-    }
-
-    /**
-     * Fetches all the objects in the provided list.
-     *
-     * @param objects The list of objects to fetch.
-     * @return The list passed in.
-     * @throws ParseException Throws an exception if the server returns an error or is inaccessible.
-     */
-    public static <T extends ParseObject> List<T> fetchAll(List<T> objects) throws ParseException {
-        return ParseTaskUtils.wait(fetchAllInBackground(objects));
-    }
-
-    /**
-     * Fetches all the objects in the provided list in the background.
-     *
-     * @param objects  The list of objects to fetch.
-     * @param callback {@code callback.done(result, e)} is called when the fetch completes.
-     */
-    public static <T extends ParseObject> void fetchAllInBackground(List<T> objects,
-                                                                    FindCallback<T> callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(fetchAllInBackground(objects), callback);
     }
 
     /**
@@ -2955,18 +3053,18 @@ public class ParseObject implements Parcelable {
         }
     }
 
-  /* package */ void markAllFieldsDirty() {
-    synchronized (mutex) {
-      for (String key : state.keySet()) {
-        performPut(key, state.get(key));
-      }
+    /* package */ void markAllFieldsDirty() {
+        synchronized (mutex) {
+            for (String key : state.keySet()) {
+                performPut(key, state.get(key));
+            }
+        }
     }
-  }
 
-  /**
-   * performOperation() is like {@link #put(String, Object)} but instead of just taking a new value,
-   * it takes a ParseFieldOperation that modifies the value.
-   */
+    /**
+     * performOperation() is like {@link #put(String, Object)} but instead of just taking a new value,
+     * it takes a ParseFieldOperation that modifies the value.
+     */
   /* package */ void performOperation(String key, ParseFieldOperation operation) {
         synchronized (mutex) {
             Object oldValue = estimatedData.get(key);
@@ -3006,19 +3104,23 @@ public class ParseObject implements Parcelable {
             throw new IllegalArgumentException("value may not be null.");
         }
 
-    if (value instanceof JSONObject) {
-      ParseDecoder decoder = ParseDecoder.get();
-      value = decoder.convertJSONObjectToMap((JSONObject) value);
-    } else if (value instanceof JSONArray) {
-      ParseDecoder decoder = ParseDecoder.get();
-      value = decoder.convertJSONArrayToList((JSONArray) value);
-    }
-
-        if (!ParseEncoder.isValidType(value)) {
-            throw new IllegalArgumentException("invalid type for value: " + value.getClass().toString());
+        if (value instanceof JSONObject) {
+            ParseDecoder decoder = ParseDecoder.get();
+            value = decoder.convertJSONObjectToMap((JSONObject) value);
+        } else if (value instanceof JSONArray) {
+            ParseDecoder decoder = ParseDecoder.get();
+            value = decoder.convertJSONArrayToList((JSONArray) value);
         }
 
-        performOperation(key, new ParseSetOperation(value));
+        if (value instanceof ParseFieldOperation) {
+            performOperation(key, (ParseFieldOperation) value);
+        } else {
+            if (!ParseEncoder.isValidType(value)) {
+                throw new IllegalArgumentException("invalid type for value: " + value.getClass().toString());
+            }
+
+            performOperation(key, new ParseSetOperation(value));
+        }
     }
 
     /**
@@ -3157,24 +3259,22 @@ public class ParseObject implements Parcelable {
         }
     }
 
-
-  /**
-   * Access a {@link String} value.
-   *
-   * @param key
-   *          The key to access the value for.
-   * @return {@code null} if there is no such key or if it is not a {@link String}.
-   */
-  public String getString(String key) {
-    synchronized (mutex) {
-      checkGetAccess(key);
-      Object value = estimatedData.get(key);
-      if (!(value instanceof String)) {
-        return null;
-      }
-      return (String) value;
+    /**
+     * Access a {@link String} value.
+     *
+     * @param key The key to access the value for.
+     * @return {@code null} if there is no such key or if it is not a {@link String}.
+     */
+    public String getString(String key) {
+        synchronized (mutex) {
+            checkGetAccess(key);
+            Object value = estimatedData.get(key);
+            if (!(value instanceof String)) {
+                return null;
+            }
+            return (String) value;
+        }
     }
-  }
 
     /**
      * Access a {@code byte[]} value.
@@ -3444,6 +3544,13 @@ public class ParseObject implements Parcelable {
         return getACL(true);
     }
 
+    /**
+     * Set the {@link ParseACL} governing this object.
+     */
+    public void setACL(ParseACL acl) {
+        put(KEY_ACL, acl);
+    }
+
     private ParseACL getACL(boolean mayCopy) {
         synchronized (mutex) {
             checkGetAccess(KEY_ACL);
@@ -3464,13 +3571,6 @@ public class ParseObject implements Parcelable {
     }
 
     /**
-     * Set the {@link ParseACL} governing this object.
-     */
-    public void setACL(ParseACL acl) {
-        put(KEY_ACL, acl);
-    }
-
-    /**
      * Gets whether the {@code ParseObject} has been fetched.
      *
      * @return {@code true} if the {@code ParseObject} is new or has been fetched or refreshed. {@code false}
@@ -3482,19 +3582,19 @@ public class ParseObject implements Parcelable {
         }
     }
 
-  /**
-   * Gets whether the {@code ParseObject} specified key has been fetched.
-   * This means the property can be accessed safely.
-   *
-   * @return {@code true} if the {@code ParseObject} key is new or has been fetched or refreshed. {@code false}
-   *         otherwise.
-   */
-  public boolean isDataAvailable(String key) {
-    synchronized (mutex) {
-      // Fallback to estimatedData to include dirty changes.
-      return isDataAvailable() || state.availableKeys().contains(key) || estimatedData.containsKey(key);
+    /**
+     * Gets whether the {@code ParseObject} specified key has been fetched.
+     * This means the property can be accessed safely.
+     *
+     * @return {@code true} if the {@code ParseObject} key is new or has been fetched or refreshed. {@code false}
+     * otherwise.
+     */
+    public boolean isDataAvailable(String key) {
+        synchronized (mutex) {
+            // Fallback to estimatedData to include dirty changes.
+            return isDataAvailable() || state.availableKeys().contains(key) || estimatedData.containsKey(key);
+        }
     }
-  }
 
     /**
      * Access or create a {@link ParseRelation} value for a key
@@ -3596,361 +3696,6 @@ public class ParseObject implements Parcelable {
      */
     boolean needsDefaultACL() {
         return true;
-    }
-
-    /**
-     * Registers the Parse-provided {@code ParseObject} subclasses. Do this here in a real method rather than
-     * as part of a static initializer because doing this in a static initializer can lead to
-     * deadlocks: https://our.intern.facebook.com/intern/tasks/?t=3508472
-     */
-  /* package */
-    static void registerParseSubclasses() {
-        registerSubclass(ParseUser.class);
-        registerSubclass(ParseRole.class);
-        registerSubclass(ParseInstallation.class);
-        registerSubclass(ParseSession.class);
-
-        registerSubclass(ParsePin.class);
-        registerSubclass(EventuallyPin.class);
-    }
-
-    /* package */
-    static void unregisterParseSubclasses() {
-        unregisterSubclass(ParseUser.class);
-        unregisterSubclass(ParseRole.class);
-        unregisterSubclass(ParseInstallation.class);
-        unregisterSubclass(ParseSession.class);
-
-        unregisterSubclass(ParsePin.class);
-        unregisterSubclass(EventuallyPin.class);
-    }
-
-    /**
-     * Default name for pinning if not specified.
-     *
-     * @see #pin()
-     * @see #unpin()
-     */
-    public static final String DEFAULT_PIN = "_default";
-
-    /**
-     * Stores the objects and every object they point to in the local datastore, recursively. If
-     * those other objects have not been fetched from Parse, they will not be stored. However, if they
-     * have changed data, all of the changes will be retained. To get the objects back later, you can
-     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
-     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
-     *
-     * @param name     the name
-     * @param objects  the objects to be pinned
-     * @param callback the callback
-     * @see #unpinAllInBackground(String, java.util.List, DeleteCallback)
-     */
-    public static <T extends ParseObject> void pinAllInBackground(String name,
-                                                                  List<T> objects, SaveCallback callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(pinAllInBackground(name, objects), callback);
-    }
-
-    /**
-     * Stores the objects and every object they point to in the local datastore, recursively. If
-     * those other objects have not been fetched from Parse, they will not be stored. However, if they
-     * have changed data, all of the changes will be retained. To get the objects back later, you can
-     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
-     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
-     *
-     * @param name    the name
-     * @param objects the objects to be pinned
-     * @return A {@link bolts.Task} that is resolved when pinning all completes.
-     * @see #unpinAllInBackground(String, java.util.List)
-     */
-    public static <T extends ParseObject> Task<Void> pinAllInBackground(final String name,
-                                                                        final List<T> objects) {
-        return pinAllInBackground(name, objects, true);
-    }
-
-    private static <T extends ParseObject> Task<Void> pinAllInBackground(final String name,
-                                                                         final List<T> objects, final boolean includeAllChildren) {
-        if (!Parse.isLocalDatastoreEnabled()) {
-            throw new IllegalStateException("Method requires Local Datastore. " +
-                    "Please refer to `Parse#enableLocalDatastore(Context)`.");
-        }
-
-        Task<Void> task = Task.forResult(null);
-
-        // Resolve and persist unresolved users attached via ACL, similarly how we do in saveAsync
-        for (final ParseObject object : objects) {
-            task = task.onSuccessTask(new Continuation<Void, Task<Void>>() {
-                @Override
-                public Task<Void> then(Task<Void> task) throws Exception {
-                    if (!object.isDataAvailable(KEY_ACL)) {
-                        return Task.forResult(null);
-                    }
-
-                    final ParseACL acl = object.getACL(false);
-                    if (acl == null) {
-                        return Task.forResult(null);
-                    }
-
-                    ParseUser user = acl.getUnresolvedUser();
-                    if (user == null || !user.isCurrentUser()) {
-                        return Task.forResult(null);
-                    }
-
-                    return ParseUser.pinCurrentUserIfNeededAsync(user);
-                }
-            });
-        }
-
-        return task.onSuccessTask(new Continuation<Void, Task<Void>>() {
-            @Override
-            public Task<Void> then(Task<Void> task) throws Exception {
-                return Parse.getLocalDatastore().pinAllObjectsAsync(
-                        name != null ? name : DEFAULT_PIN,
-                        objects,
-                        includeAllChildren);
-            }
-        }).onSuccessTask(new Continuation<Void, Task<Void>>() {
-            @Override
-            public Task<Void> then(Task<Void> task) throws Exception {
-                // Hack to emulate persisting current user on disk after a save like in ParseUser#saveAsync
-                // Note: This does not persist current user if it's a child object of `objects`, it probably
-                // should, but we can't unless we do something similar to #deepSaveAsync.
-                if (ParseCorePlugins.PIN_CURRENT_USER.equals(name)) {
-                    return task;
-                }
-                for (ParseObject object : objects) {
-                    if (object instanceof ParseUser) {
-                        final ParseUser user = (ParseUser) object;
-                        if (user.isCurrentUser()) {
-                            return ParseUser.pinCurrentUserIfNeededAsync(user);
-                        }
-                    }
-                }
-                return task;
-            }
-        });
-    }
-
-    /**
-     * Stores the objects and every object they point to in the local datastore, recursively. If
-     * those other objects have not been fetched from Parse, they will not be stored. However, if they
-     * have changed data, all of the changes will be retained. To get the objects back later, you can
-     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
-     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
-     * {@link #fetchFromLocalDatastore()} on it.
-     *
-     * @param name    the name
-     * @param objects the objects to be pinned
-     * @throws ParseException
-     * @see #unpinAll(String, java.util.List)
-     */
-    public static <T extends ParseObject> void pinAll(String name,
-                                                      List<T> objects) throws ParseException {
-        ParseTaskUtils.wait(pinAllInBackground(name, objects));
-    }
-
-    /**
-     * Stores the objects and every object they point to in the local datastore, recursively. If
-     * those other objects have not been fetched from Parse, they will not be stored. However, if they
-     * have changed data, all of the changes will be retained. To get the objects back later, you can
-     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
-     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
-     *
-     * @param objects  the objects to be pinned
-     * @param callback the callback
-     * @see #unpinAllInBackground(java.util.List, DeleteCallback)
-     * @see #DEFAULT_PIN
-     */
-    public static <T extends ParseObject> void pinAllInBackground(List<T> objects,
-                                                                  SaveCallback callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(pinAllInBackground(DEFAULT_PIN, objects), callback);
-    }
-
-    /**
-     * Stores the objects and every object they point to in the local datastore, recursively. If
-     * those other objects have not been fetched from Parse, they will not be stored. However, if they
-     * have changed data, all of the changes will be retained. To get the objects back later, you can
-     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
-     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
-     *
-     * @param objects the objects to be pinned
-     * @return A {@link bolts.Task} that is resolved when pinning all completes.
-     * @see #unpinAllInBackground(java.util.List)
-     * @see #DEFAULT_PIN
-     */
-    public static <T extends ParseObject> Task<Void> pinAllInBackground(List<T> objects) {
-        return pinAllInBackground(DEFAULT_PIN, objects);
-    }
-
-    /**
-     * Stores the objects and every object they point to in the local datastore, recursively. If
-     * those other objects have not been fetched from Parse, they will not be stored. However, if they
-     * have changed data, all of the changes will be retained. To get the objects back later, you can
-     * use {@link ParseQuery#fromLocalDatastore()}, or you can create an unfetched pointer with
-     * {@link #createWithoutData(Class, String)} and then call {@link #fetchFromLocalDatastore()} on it.
-     *
-     * @param objects the objects to be pinned
-     * @throws ParseException
-     * @see #unpinAll(java.util.List)
-     * @see #DEFAULT_PIN
-     */
-    public static <T extends ParseObject> void pinAll(List<T> objects) throws ParseException {
-        ParseTaskUtils.wait(pinAllInBackground(DEFAULT_PIN, objects));
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param name     the name
-     * @param objects  the objects
-     * @param callback the callback
-     * @see #pinAllInBackground(String, java.util.List, SaveCallback)
-     */
-    public static <T extends ParseObject> void unpinAllInBackground(String name, List<T> objects,
-                                                                    DeleteCallback callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(unpinAllInBackground(name, objects), callback);
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param name    the name
-     * @param objects the objects
-     * @return A {@link bolts.Task} that is resolved when unpinning all completes.
-     * @see #pinAllInBackground(String, java.util.List)
-     */
-    public static <T extends ParseObject> Task<Void> unpinAllInBackground(String name,
-                                                                          List<T> objects) {
-        if (!Parse.isLocalDatastoreEnabled()) {
-            throw new IllegalStateException("Method requires Local Datastore. " +
-                    "Please refer to `Parse#enableLocalDatastore(Context)`.");
-        }
-        if (name == null) {
-            name = DEFAULT_PIN;
-        }
-        return Parse.getLocalDatastore().unpinAllObjectsAsync(name, objects);
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param name    the name
-     * @param objects the objects
-     * @throws ParseException
-     * @see #pinAll(String, java.util.List)
-     */
-    public static <T extends ParseObject> void unpinAll(String name,
-                                                        List<T> objects) throws ParseException {
-        ParseTaskUtils.wait(unpinAllInBackground(name, objects));
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param objects  the objects
-     * @param callback the callback
-     * @see #pinAllInBackground(java.util.List, SaveCallback)
-     * @see #DEFAULT_PIN
-     */
-    public static <T extends ParseObject> void unpinAllInBackground(List<T> objects,
-                                                                    DeleteCallback callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(unpinAllInBackground(DEFAULT_PIN, objects), callback);
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param objects the objects
-     * @return A {@link bolts.Task} that is resolved when unpinning all completes.
-     * @see #pinAllInBackground(java.util.List)
-     * @see #DEFAULT_PIN
-     */
-    public static <T extends ParseObject> Task<Void> unpinAllInBackground(List<T> objects) {
-        return unpinAllInBackground(DEFAULT_PIN, objects);
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param objects the objects
-     * @throws ParseException
-     * @see #pinAll(java.util.List)
-     * @see #DEFAULT_PIN
-     */
-    public static <T extends ParseObject> void unpinAll(List<T> objects) throws ParseException {
-        ParseTaskUtils.wait(unpinAllInBackground(DEFAULT_PIN, objects));
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param name     the name
-     * @param callback the callback
-     * @see #pinAll(String, java.util.List)
-     */
-    public static void unpinAllInBackground(String name, DeleteCallback callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(unpinAllInBackground(name), callback);
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param name the name
-     * @return A {@link bolts.Task} that is resolved when unpinning all completes.
-     * @see #pinAll(String, java.util.List)
-     */
-    public static Task<Void> unpinAllInBackground(String name) {
-        if (!Parse.isLocalDatastoreEnabled()) {
-            throw new IllegalStateException("Method requires Local Datastore. " +
-                    "Please refer to `Parse#enableLocalDatastore(Context)`.");
-        }
-        if (name == null) {
-            name = DEFAULT_PIN;
-        }
-        return Parse.getLocalDatastore().unpinAllObjectsAsync(name);
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param name the name
-     * @throws ParseException
-     * @see #pinAll(String, java.util.List)
-     */
-    public static void unpinAll(String name) throws ParseException {
-        ParseTaskUtils.wait(unpinAllInBackground(name));
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @param callback the callback
-     * @see #pinAllInBackground(java.util.List, SaveCallback)
-     * @see #DEFAULT_PIN
-     */
-    public static void unpinAllInBackground(DeleteCallback callback) {
-        ParseTaskUtils.callbackOnMainThreadAsync(unpinAllInBackground(), callback);
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @return A {@link bolts.Task} that is resolved when unpinning all completes.
-     * @see #pinAllInBackground(java.util.List, SaveCallback)
-     * @see #DEFAULT_PIN
-     */
-    public static Task<Void> unpinAllInBackground() {
-        return unpinAllInBackground(DEFAULT_PIN);
-    }
-
-    /**
-     * Removes the objects and every object they point to in the local datastore, recursively.
-     *
-     * @throws ParseException
-     * @see #pinAll(java.util.List)
-     * @see #DEFAULT_PIN
-     */
-    public static void unpinAll() throws ParseException {
-        ParseTaskUtils.wait(unpinAllInBackground());
     }
 
     /**
@@ -4135,140 +3880,390 @@ public class ParseObject implements Parcelable {
         return unpinAllInBackground(DEFAULT_PIN, Arrays.asList(this));
     }
 
-  /**
-   * Removes the object and every object it points to in the local datastore, recursively.
-   *
-   * @see #pin()
-   * @see #DEFAULT_PIN
-   */
-  public void unpin() throws ParseException {
-    ParseTaskUtils.wait(unpinInBackground());
-  }
+    /**
+     * Removes the object and every object it points to in the local datastore, recursively.
+     *
+     * @see #pin()
+     * @see #DEFAULT_PIN
+     */
+    public void unpin() throws ParseException {
+        ParseTaskUtils.wait(unpinInBackground());
+    }
 
+    @Override
+    public int describeContents() {
+        return 0;
+    }
 
-  @Override
-  public int describeContents() {
-    return 0;
-  }
+    @Override
+    public void writeToParcel(Parcel dest, int flags) {
+        writeToParcel(dest, new ParseObjectParcelEncoder(this));
+    }
 
-  @Override
-  public void writeToParcel(Parcel dest, int flags) {
-      writeToParcel(dest, new ParseObjectParcelEncoder(this));
-  }
-
-  /* package */ void writeToParcel(Parcel dest, ParseParcelEncoder encoder) {
-    synchronized (mutex) {
-      // Developer warnings.
-      ldsEnabledWhenParceling = Parse.isLocalDatastoreEnabled();
-      boolean saving = hasOutstandingOperations();
-      boolean deleting = isDeleting || isDeletingEventually > 0;
-      if (saving) {
-        Log.w(TAG, "About to parcel a ParseObject while a save / saveEventually operation is " +
-            "going on. If recovered from LDS, the unparceled object will be internally updated when " +
-            "these tasks end. If not, it will act as if these tasks have failed. This means that " +
-            "the subsequent call to save() will update again the same keys, and this is dangerous " +
-            "for certain operations, like increment(). To avoid inconsistencies, wait for operations " +
-            "to end before parceling.");
-      }
-      if (deleting) {
-        Log.w(TAG, "About to parcel a ParseObject while a delete / deleteEventually operation is " +
-            "going on. If recovered from LDS, the unparceled object will be internally updated when " +
-            "these tasks end. If not, it will assume it's not deleted, and might incorrectly " +
-            "return false for isDirty(). To avoid inconsistencies, wait for operations to end " +
-            "before parceling.");
-      }
-      // Write className and id first, regardless of state.
-      dest.writeString(getClassName());
-      String objectId = getObjectId();
-      dest.writeByte(objectId != null ? (byte) 1 : 0);
-      if (objectId != null) dest.writeString(objectId);
-      // Write state and other members
-      state.writeToParcel(dest, encoder);
-      dest.writeByte(localId != null ? (byte) 1 : 0);
-      if (localId != null) dest.writeString(localId);
-      dest.writeByte(isDeleted ? (byte) 1 : 0);
-      // Care about dirty changes and ongoing tasks.
-      ParseOperationSet set;
-      if (hasOutstandingOperations()) {
-        // There's more than one set. Squash the queue, creating copies
-        // to preserve the original queue when LDS is enabled.
-        set = new ParseOperationSet();
-        for (ParseOperationSet operationSet : operationSetQueue) {
-          ParseOperationSet copy = new ParseOperationSet(operationSet);
-          copy.mergeFrom(set);
-          set = copy;
+    /* package */ void writeToParcel(Parcel dest, ParseParcelEncoder encoder) {
+        synchronized (mutex) {
+            // Developer warnings.
+            ldsEnabledWhenParceling = Parse.isLocalDatastoreEnabled();
+            boolean saving = hasOutstandingOperations();
+            boolean deleting = isDeleting || isDeletingEventually > 0;
+            if (saving) {
+                Log.w(TAG, "About to parcel a ParseObject while a save / saveEventually operation is " +
+                        "going on. If recovered from LDS, the unparceled object will be internally updated when " +
+                        "these tasks end. If not, it will act as if these tasks have failed. This means that " +
+                        "the subsequent call to save() will update again the same keys, and this is dangerous " +
+                        "for certain operations, like increment(). To avoid inconsistencies, wait for operations " +
+                        "to end before parceling.");
+            }
+            if (deleting) {
+                Log.w(TAG, "About to parcel a ParseObject while a delete / deleteEventually operation is " +
+                        "going on. If recovered from LDS, the unparceled object will be internally updated when " +
+                        "these tasks end. If not, it will assume it's not deleted, and might incorrectly " +
+                        "return false for isDirty(). To avoid inconsistencies, wait for operations to end " +
+                        "before parceling.");
+            }
+            // Write className and id first, regardless of state.
+            dest.writeString(getClassName());
+            String objectId = getObjectId();
+            dest.writeByte(objectId != null ? (byte) 1 : 0);
+            if (objectId != null) dest.writeString(objectId);
+            // Write state and other members
+            state.writeToParcel(dest, encoder);
+            dest.writeByte(localId != null ? (byte) 1 : 0);
+            if (localId != null) dest.writeString(localId);
+            dest.writeByte(isDeleted ? (byte) 1 : 0);
+            // Care about dirty changes and ongoing tasks.
+            ParseOperationSet set;
+            if (hasOutstandingOperations()) {
+                // There's more than one set. Squash the queue, creating copies
+                // to preserve the original queue when LDS is enabled.
+                set = new ParseOperationSet();
+                for (ParseOperationSet operationSet : operationSetQueue) {
+                    ParseOperationSet copy = new ParseOperationSet(operationSet);
+                    copy.mergeFrom(set);
+                    set = copy;
+                }
+            } else {
+                set = operationSetQueue.getLast();
+            }
+            set.setIsSaveEventually(false);
+            set.toParcel(dest, encoder);
+            // Pass a Bundle to subclasses.
+            Bundle bundle = new Bundle();
+            onSaveInstanceState(bundle);
+            dest.writeBundle(bundle);
         }
-      } else {
-        set = operationSetQueue.getLast();
-      }
-      set.setIsSaveEventually(false);
-      set.toParcel(dest, encoder);
-      // Pass a Bundle to subclasses.
-      Bundle bundle = new Bundle();
-      onSaveInstanceState(bundle);
-      dest.writeBundle(bundle);
-    }
-  }
-
-  public final static Creator<ParseObject> CREATOR = new Creator<ParseObject>() {
-    @Override
-    public ParseObject createFromParcel(Parcel source) {
-      return ParseObject.createFromParcel(source, new ParseObjectParcelDecoder());
     }
 
-    @Override
-    public ParseObject[] newArray(int size) {
-      return new ParseObject[size];
+    /**
+     * Called when parceling this ParseObject.
+     * Subclasses can put values into the provided {@link Bundle} and receive them later
+     * {@link #onRestoreInstanceState(Bundle)}. Note that internal fields are already parceled by
+     * the framework.
+     *
+     * @param outState Bundle to host extra values
+     */
+    protected void onSaveInstanceState(Bundle outState) {
     }
-  };
 
-  /* package */ static ParseObject createFromParcel(Parcel source, ParseParcelDecoder decoder) {
-    String className = source.readString();
-    String objectId = source.readByte() == 1 ? source.readString() : null;
-    // Create empty object (might be the same instance if LDS is enabled)
-    // and pass to decoder before unparceling child objects in State
-    ParseObject object = createWithoutData(className, objectId);
-    if (decoder instanceof ParseObjectParcelDecoder) {
-      ((ParseObjectParcelDecoder) decoder).addKnownObject(object);
+    /**
+     * Called when unparceling this ParseObject.
+     * Subclasses can read values from the provided {@link Bundle} that were previously put
+     * during {@link #onSaveInstanceState(Bundle)}. At this point the internal state is already
+     * recovered.
+     *
+     * @param savedState Bundle to read the values from
+     */
+    protected void onRestoreInstanceState(Bundle savedState) {
     }
-    State state = State.createFromParcel(source, decoder);
-    object.setState(state);
-    if (source.readByte() == 1) object.localId = source.readString();
-    if (source.readByte() == 1) object.isDeleted = true;
-    // If object.ldsEnabledWhenParceling is true, we got this from OfflineStore.
-    // There is no need to restore operations in that case.
-    boolean restoreOperations = !object.ldsEnabledWhenParceling;
-    ParseOperationSet set = ParseOperationSet.fromParcel(source, decoder);
-    if (restoreOperations) {
-      for (String key : set.keySet()) {
-        ParseFieldOperation op = set.get(key);
-        object.performOperation(key, op); // Update ops and estimatedData
-      }
+
+    /**
+     * package
+     */
+    static class State {
+
+        private final String className;
+        private final String objectId;
+        private final long createdAt;
+        private final long updatedAt;
+        private final Map<String, Object> serverData;
+        private final Set<String> availableKeys;
+        private final boolean isComplete;
+        /* package */ State(Init<?> builder) {
+            className = builder.className;
+            objectId = builder.objectId;
+            createdAt = builder.createdAt;
+            updatedAt = builder.updatedAt > 0
+                    ? builder.updatedAt
+                    : createdAt;
+            serverData = Collections.unmodifiableMap(new HashMap<>(builder.serverData));
+            isComplete = builder.isComplete;
+            availableKeys = new HashSet<>(builder.availableKeys);
+        }
+        /* package */ State(Parcel parcel, String clazz, ParseParcelDecoder decoder) {
+            className = clazz; // Already read
+            objectId = parcel.readByte() == 1 ? parcel.readString() : null;
+            createdAt = parcel.readLong();
+            long updated = parcel.readLong();
+            updatedAt = updated > 0 ? updated : createdAt;
+            int size = parcel.readInt();
+            HashMap<String, Object> map = new HashMap<>();
+            for (int i = 0; i < size; i++) {
+                String key = parcel.readString();
+                Object obj = decoder.decode(parcel);
+                map.put(key, obj);
+            }
+            serverData = Collections.unmodifiableMap(map);
+            isComplete = parcel.readByte() == 1;
+            List<String> available = new ArrayList<>();
+            parcel.readStringList(available);
+            availableKeys = new HashSet<>(available);
+        }
+
+        public static Init<?> newBuilder(String className) {
+            if ("_User".equals(className)) {
+                return new ParseUser.State.Builder();
+            }
+            return new Builder(className);
+        }
+
+        /* package */
+        static State createFromParcel(Parcel source, ParseParcelDecoder decoder) {
+            String className = source.readString();
+            if ("_User".equals(className)) {
+                return new ParseUser.State(source, className, decoder);
+            }
+            return new State(source, className, decoder);
+        }
+
+        @SuppressWarnings("unchecked")
+        public <T extends Init<?>> T newBuilder() {
+            return (T) new Builder(this);
+        }
+
+        public String className() {
+            return className;
+        }
+
+        public String objectId() {
+            return objectId;
+        }
+
+        public long createdAt() {
+            return createdAt;
+        }
+
+        public long updatedAt() {
+            return updatedAt;
+        }
+
+        public boolean isComplete() {
+            return isComplete;
+        }
+
+        public Object get(String key) {
+            return serverData.get(key);
+        }
+
+        public Set<String> keySet() {
+            return serverData.keySet();
+        }
+
+        // Available keys for this object. With respect to keySet(), this includes also keys that are
+        // undefined in the server, but that should be accessed without throwing.
+        // These extra keys come e.g. from ParseQuery.selectKeys(). Selected keys must be available to
+        // get() methods even if undefined, for consistency with complete objects.
+        // For a complete object, this set is equal to keySet().
+        public Set<String> availableKeys() {
+            return availableKeys;
+        }
+
+        protected void writeToParcel(Parcel dest, ParseParcelEncoder encoder) {
+            dest.writeString(className);
+            dest.writeByte(objectId != null ? (byte) 1 : 0);
+            if (objectId != null) {
+                dest.writeString(objectId);
+            }
+            dest.writeLong(createdAt);
+            dest.writeLong(updatedAt);
+            dest.writeInt(serverData.size());
+            Set<String> keys = serverData.keySet();
+            for (String key : keys) {
+                dest.writeString(key);
+                encoder.encode(serverData.get(key), dest);
+            }
+            dest.writeByte(isComplete ? (byte) 1 : 0);
+            dest.writeStringList(new ArrayList<>(availableKeys));
+        }
+
+        @Override
+        public String toString() {
+            return String.format(Locale.US, "%s@%s[" +
+                            "className=%s, objectId=%s, createdAt=%d, updatedAt=%d, isComplete=%s, " +
+                            "serverData=%s, availableKeys=%s]",
+                    getClass().getName(),
+                    Integer.toHexString(hashCode()),
+                    className,
+                    objectId,
+                    createdAt,
+                    updatedAt,
+                    isComplete,
+                    serverData,
+                    availableKeys);
+        }
+
+        /**
+         * package
+         */
+        static abstract class Init<T extends Init> {
+
+            private final String className;
+            /* package */ Map<String, Object> serverData = new HashMap<>();
+            private String objectId;
+            private long createdAt = -1;
+            private long updatedAt = -1;
+            private boolean isComplete;
+            private Set<String> availableKeys = new HashSet<>();
+
+            public Init(String className) {
+                this.className = className;
+            }
+
+            /* package */ Init(State state) {
+                className = state.className();
+                objectId = state.objectId();
+                createdAt = state.createdAt();
+                updatedAt = state.updatedAt();
+                availableKeys = state.availableKeys();
+                for (String key : state.keySet()) {
+                    serverData.put(key, state.get(key));
+                    availableKeys.add(key);
+                }
+                isComplete = state.isComplete();
+            }
+
+            /* package */
+            abstract T self();
+
+            /* package */
+            abstract <S extends State> S build();
+
+            public T objectId(String objectId) {
+                this.objectId = objectId;
+                return self();
+            }
+
+            public T createdAt(Date createdAt) {
+                this.createdAt = createdAt.getTime();
+                return self();
+            }
+
+            public T createdAt(long createdAt) {
+                this.createdAt = createdAt;
+                return self();
+            }
+
+            public T updatedAt(Date updatedAt) {
+                this.updatedAt = updatedAt.getTime();
+                return self();
+            }
+
+            public T updatedAt(long updatedAt) {
+                this.updatedAt = updatedAt;
+                return self();
+            }
+
+            public T isComplete(boolean complete) {
+                isComplete = complete;
+                return self();
+            }
+
+            public T put(String key, Object value) {
+                serverData.put(key, value);
+                availableKeys.add(key);
+                return self();
+            }
+
+            public T remove(String key) {
+                serverData.remove(key);
+                return self();
+            }
+
+            public T availableKeys(Collection<String> keys) {
+                for (String key : keys) {
+                    availableKeys.add(key);
+                }
+                return self();
+            }
+
+            public T clear() {
+                objectId = null;
+                createdAt = -1;
+                updatedAt = -1;
+                isComplete = false;
+                serverData.clear();
+                availableKeys.clear();
+                return self();
+            }
+
+            /**
+             * Applies a {@code State} on top of this {@code Builder} instance.
+             *
+             * @param other The {@code State} to apply over this instance.
+             * @return A new {@code Builder} instance.
+             */
+            public T apply(State other) {
+                if (other.objectId() != null) {
+                    objectId(other.objectId());
+                }
+                if (other.createdAt() > 0) {
+                    createdAt(other.createdAt());
+                }
+                if (other.updatedAt() > 0) {
+                    updatedAt(other.updatedAt());
+                }
+                isComplete(isComplete || other.isComplete());
+                for (String key : other.keySet()) {
+                    put(key, other.get(key));
+                }
+                availableKeys(other.availableKeys());
+                return self();
+            }
+
+            public T apply(ParseOperationSet operations) {
+                for (String key : operations.keySet()) {
+                    ParseFieldOperation operation = operations.get(key);
+                    Object oldValue = serverData.get(key);
+                    Object newValue = operation.apply(oldValue, key);
+                    if (newValue != null) {
+                        put(key, newValue);
+                    } else {
+                        remove(key);
+                    }
+                }
+                return self();
+            }
+        }
+
+        /* package */ static class Builder extends Init<Builder> {
+
+            public Builder(String className) {
+                super(className);
+            }
+
+            public Builder(State state) {
+                super(state);
+            }
+
+            @Override
+      /* package */ Builder self() {
+                return this;
+            }
+
+            public State build() {
+                return new State(this);
+            }
+        }
     }
-    Bundle bundle = source.readBundle(ParseObject.class.getClassLoader());
-    object.onRestoreInstanceState(bundle);
-    return object;
-  }
-
-  /**
-   * Called when parceling this ParseObject.
-   * Subclasses can put values into the provided {@link Bundle} and receive them later
-   * {@link #onRestoreInstanceState(Bundle)}. Note that internal fields are already parceled by
-   * the framework.
-   *
-   * @param outState Bundle to host extra values
-   */
-  protected void onSaveInstanceState(Bundle outState) {}
-
-  /**
-   * Called when unparceling this ParseObject.
-   * Subclasses can read values from the provided {@link Bundle} that were previously put
-   * during {@link #onSaveInstanceState(Bundle)}. At this point the internal state is already
-   * recovered.
-   *
-   * @param savedState Bundle to read the values from
-   */
-  protected void onRestoreInstanceState(Bundle savedState) {}
 
 }
 

@@ -39,10 +39,6 @@ android {
         exclude '**/BuildConfig.class'
     }
 
-    lintOptions {
-        abortOnError false
-    }
-
     buildTypes {
         debug {
             testCoverageEnabled = true
