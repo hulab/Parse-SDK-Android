@@ -387,8 +387,7 @@ public class ParseObject implements Parcelable {
      * @param selectedKeys     Set of keys selected when quering for this object. If none, the object is assumed to
      *                         be complete, i.e. this is all the data for the object on the server.
      */
-  /* package */
-    static <T extends ParseObject> T fromJSON(JSONObject json, String defaultClassName,
+    public static <T extends ParseObject> T fromJSON(JSONObject json, String defaultClassName,
                                               ParseDecoder decoder,
                                               Set<String> selectedKeys) {
         if (selectedKeys != null && !selectedKeys.isEmpty()) {
@@ -410,8 +409,7 @@ public class ParseObject implements Parcelable {
      * @param defaultClassName The className of the object, if none is in the JSON.
      * @param decoder          Delegate for knowing how to decode the values in the JSON.
      */
-  /* package */
-    static <T extends ParseObject> T fromJSON(JSONObject json, String defaultClassName,
+    public static <T extends ParseObject> T fromJSON(JSONObject json, String defaultClassName,
                                               ParseDecoder decoder) {
         String className = json.optString(KEY_CLASS_NAME, defaultClassName);
         if (className == null) {
@@ -2030,7 +2028,7 @@ public class ParseObject implements Parcelable {
      * Returns the localId, which is used internally for serializing relations to objects that don't
      * yet have an objectId.
      */
-  /* package */ String getOrCreateLocalId() {
+    public String getOrCreateLocalId() {
         synchronized (mutex) {
             if (localId == null) {
                 if (state.objectId() != null) {
