@@ -11,7 +11,7 @@ package com.parse;
 import java.io.File;
 import java.util.concurrent.atomic.AtomicReference;
 
-class ParseCorePlugins {
+public class ParseCorePlugins {
 
     /* package */ static final String FILENAME_CURRENT_USER = "currentUser";
     /* package */ static final String PIN_CURRENT_USER = "_currentUser";

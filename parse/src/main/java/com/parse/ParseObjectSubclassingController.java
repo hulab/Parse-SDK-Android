@@ -13,7 +13,7 @@ import java.lang.reflect.Modifier;
 import java.util.HashMap;
 import java.util.Map;
 
-/* package */ class ParseObjectSubclassingController {
+public class ParseObjectSubclassingController {
     private final Object mutex = new Object();
     private final Map<String, Constructor<? extends ParseObject>> registeredSubclasses = new HashMap<>();
 
@@ -30,7 +30,7 @@ import java.util.Map;
         throw new IllegalAccessException();
     }
 
-    /* package */ String getClassName(Class<? extends ParseObject> clazz) {
+    public String getClassName(Class<? extends ParseObject> clazz) {
         ParseClassName info = clazz.getAnnotation(ParseClassName.class);
         if (info == null) {
             throw new IllegalArgumentException("No ParseClassName annotation provided on " + clazz);

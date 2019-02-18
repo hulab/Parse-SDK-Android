@@ -17,7 +17,7 @@ import org.json.JSONException;
  * setting, deleting, or incrementing a value are all different kinds of ParseFieldOperations.
  * ParseFieldOperations themselves can be considered to be immutable.
  */
-interface ParseFieldOperation {
+public interface ParseFieldOperation {
     /**
      * Converts the ParseFieldOperation to a data structure (typically a JSONObject) that can be
      * converted to JSON and sent to Parse as part of a save operation.
@@ -25,7 +25,7 @@ interface ParseFieldOperation {
      * @param objectEncoder An object responsible for serializing ParseObjects.
      * @return An object to be jsonified.
      */
-    Object encode(ParseEncoder objectEncoder) throws JSONException;
+    public Object encode(ParseEncoder objectEncoder) throws JSONException;
 
     /**
      * Writes the ParseFieldOperation to the given Parcel using the given encoder.
@@ -62,6 +62,6 @@ interface ParseFieldOperation {
      * @param key      The key that this value is for.
      * @return The new value for the field.
      */
-    Object apply(Object oldValue, String key);
+    public Object apply(Object oldValue, String key);
 }
 

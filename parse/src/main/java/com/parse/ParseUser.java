@@ -615,7 +615,7 @@ public class ParseUser extends ParseObject {
     }
 
     @Override
-        /* package */ JSONObject toRest(
+        public JSONObject toRest(
             ParseObject.State state,
             List<ParseOperationSet> operationSetQueue,
             ParseEncoder objectEncoder) {

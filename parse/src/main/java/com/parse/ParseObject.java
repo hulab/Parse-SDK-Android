@@ -441,7 +441,7 @@ public class ParseObject implements Parcelable {
      * @param decoder Delegate for knowing how to decode the values in the JSON.
      */
 
-    static <T extends ParseObject> T fromJSONPayload(
+    public static <T extends ParseObject> T fromJSONPayload(
             JSONObject json, ParseDecoder decoder) {
         String className = json.optString(KEY_CLASS_NAME);
         if (className == null || ParseTextUtils.isEmpty(className)) {
@@ -1592,7 +1592,7 @@ public class ParseObject implements Parcelable {
      * @param json    : JSON object to be converted to Parse object
      * @param decoder : Decoder to be used for Decoding JSON
      */
-    void build(JSONObject json, ParseDecoder decoder) {
+    public void build(JSONObject json, ParseDecoder decoder) {
         try {
             State.Builder builder = new State.Builder(state)
                     .isComplete(true);
@@ -1643,7 +1643,7 @@ public class ParseObject implements Parcelable {
      *
      * @see #toJSONObjectForSaving(State, ParseOperationSet, ParseEncoder)
      */
-    State mergeFromServer(
+    public State mergeFromServer(
             State state, JSONObject json, ParseDecoder decoder, boolean completeData) {
         try {
             // If server data is complete, consider this object to be fetched.
@@ -1720,12 +1720,68 @@ public class ParseObject implements Parcelable {
         }
     }
 
+    public JSONObject toRestFromEstimatedData(ParseEncoder encoder) {
+        Object var4 = this.mutex;
+        synchronized(this.mutex) {
+            ParseObject.State state = this.getState();
+            int operationSetQueueSize = this.operationSetQueue.size();
+            ArrayList<ParseOperationSet> operationSetQueueCopy = new ArrayList<>(operationSetQueueSize);
+
+            for(int i = 0; i < operationSetQueueSize; ++i) {
+                ParseOperationSet original = (ParseOperationSet)this.operationSetQueue.get(i);
+                ParseOperationSet copy = new ParseOperationSet(original);
+                operationSetQueueCopy.add(copy);
+            }
+
+            return this.toRestFromEstimatedData(state, operationSetQueueCopy, encoder);
+        }
+    }
+
+    public JSONObject toRestFromEstimatedData(ParseObject.State state, List<ParseOperationSet> operationSetQueue, ParseEncoder objectEncoder) {
+        JSONObject json = new JSONObject();
+
+        try {
+            json.put(KEY_CLASS_NAME, state.className());
+            if(state.objectId() != null) {
+                json.put(KEY_OBJECT_ID, state.objectId());
+            }
+
+            if(state.createdAt() > 0L) {
+                json.put(KEY_CREATED_AT, ParseDateFormat.getInstance().format(new Date(state.createdAt())));
+            }
+
+            json.put(KEY_UPDATED_AT, ParseDateFormat.getInstance().format(new Date()));
+            Iterator<String> e = this.estimatedData.keySet().iterator();
+
+            while(e.hasNext()) {
+                String key = e.next();
+                Object operationSet = this.estimatedData.get(key);
+                json.put(key, objectEncoder.encode(operationSet));
+            }
+
+            json.put(KEY_COMPLETE, state.isComplete());
+            json.put(KEY_IS_DELETING_EVENTUALLY, this.isDeletingEventually);
+            JSONArray e1 = new JSONArray();
+            Iterator<ParseOperationSet> key1 = operationSetQueue.iterator();
+
+            while(key1.hasNext()) {
+                ParseOperationSet operationSet1 = key1.next();
+                e1.put(operationSet1.toRest(objectEncoder));
+            }
+
+            json.put(KEY_OPERATIONS, e1);
+            return json;
+        } catch (JSONException var8) {
+            throw new RuntimeException("could not serialize object to JSON");
+        }
+    }
+
     /**
      * Convert to REST JSON for persisting in LDS.
      *
      * @see #mergeREST(State, org.json.JSONObject, ParseDecoder)
      */
-    JSONObject toRest(ParseEncoder encoder) {
+    public JSONObject toRest(ParseEncoder encoder) {
         State state;
         List<ParseOperationSet> operationSetQueueCopy;
         synchronized (mutex) {
@@ -1745,7 +1801,7 @@ public class ParseObject implements Parcelable {
         return toRest(state, operationSetQueueCopy, encoder);
     }
 
-    JSONObject toRest(
+    public JSONObject toRest(
             State state, List<ParseOperationSet> operationSetQueue, ParseEncoder objectEncoder) {
         // Public data goes in dataJSON; special fields go in objectJSON.
         JSONObject json = new JSONObject();
@@ -1796,7 +1852,7 @@ public class ParseObject implements Parcelable {
      *
      * @see #toRest(ParseEncoder)
      */
-    void mergeREST(State state, JSONObject json, ParseDecoder decoder) {
+    public void mergeREST(State state, JSONObject json, ParseDecoder decoder) {
         ArrayList<ParseOperationSet> saveEventuallyOperationSets = new ArrayList<>();
 
         synchronized (mutex) {

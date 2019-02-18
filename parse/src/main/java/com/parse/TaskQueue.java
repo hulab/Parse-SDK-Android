@@ -18,7 +18,7 @@ import bolts.Task;
 /**
  * A helper class for enqueueing tasks
  */
-class TaskQueue {
+public class TaskQueue {
     private final Lock lock = new ReentrantLock();
     /**
      * We only need to keep the tail of the queue. Cancelled tasks will just complete
@@ -73,7 +73,7 @@ class TaskQueue {
      *                  created task's turn in the queue.
      * @return The task created by the taskStart function.
      */
-    <T> Task<T> enqueue(Continuation<Void, Task<T>> taskStart) {
+    public <T> Task<T> enqueue(Continuation<Void, Task<T>> taskStart) {
         lock.lock();
         try {
             Task<T> task;
